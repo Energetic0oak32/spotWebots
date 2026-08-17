@@ -23,6 +23,6 @@ RectangleArena {
   wallHeight 0.5
 }
 Spot {
-  controller "spot_ppo"
+  controller "main"
   supervisor TRUE
 }
