@@ -5,7 +5,7 @@ sceneTreePerspectives: 000000ff00000001000000030000001e000000c0000000fa010000000
 maximizedDockId: -1
 centralWidgetVisible: 1
 orthographicViewHeight: 1
-textFiles: 0 "main.py"
+textFiles: 0 "controllers/main/main.py"
 consoles: Console:All:All
 renderingDevicePerspectives: Spot:left flank camera;1;0.597222;0;0
 renderingDevicePerspectives: Spot:left head camera;1;0.597222;0;0

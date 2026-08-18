@@ -3,6 +3,7 @@ import gymnasium as gym
 
 from gymnasium import spaces
 from controller import Supervisor
+from motors import SpotMotors
 
 
 class SpotEnv(gym.Env):
@@ -12,6 +13,7 @@ class SpotEnv(gym.Env):
         super().__init__()
 
         self.robot = Supervisor()
+        self.spot_motors = SpotMotors(self.robot)
 
         self.time_step = int(self.robot.getBasicTimeStep())
 
@@ -56,8 +58,13 @@ class SpotEnv(gym.Env):
 
         self.steps += 1
 
-        self.state += action * 0.01
+        # Teste: move somente o primeiro motor
+        self.spot_motors.set_motor_position(
+            0,
+            0.3
+        )
 
+        # Agora deixa o Webots aplicar fisicamente esse comando
         status = self.robot.step(
             self.time_step
         )
