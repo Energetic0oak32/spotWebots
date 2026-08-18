@@ -2,3 +2,5 @@
 .protos/
 .plugins/
 .libraries/
+__pycache__/
+*.pyc

@@ -1,11 +1,10 @@
 from spot_env import SpotEnv
 
-
 env = SpotEnv()
 
 obs, info = env.reset()
 
-print("Estado inicial:")
+print("Estado inicial: ")
 print(obs)
 
 
