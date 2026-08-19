@@ -5,7 +5,6 @@ from gymnasium import spaces
 from controller import Supervisor
 from motors import SpotMotors
 
-
 class SpotEnv(gym.Env):
 
     def __init__(self):
@@ -13,9 +12,10 @@ class SpotEnv(gym.Env):
         super().__init__()
 
         self.robot = Supervisor()
-        self.spot_motors = SpotMotors(self.robot)
 
         self.time_step = int(self.robot.getBasicTimeStep())
+
+        self.spot_motors = SpotMotors(self.robot, self.time_step)
 
         self.action_space = spaces.Box(
             low=-1.0,
@@ -25,64 +25,70 @@ class SpotEnv(gym.Env):
         )
 
         self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(12,),
-            dtype=np.float32
-        )
-
-        self.state = np.zeros(
-            12,
+            low=self.spot_motors.joint_min,
+            high=self.spot_motors.joint_max,
             dtype=np.float32
         )
 
         self.steps = 0
         self.max_steps = 1000
 
+    def _action_to_positions(self, action):
+
+        action = np.asarray(
+            action,
+            dtype=np.float32
+        )
+
+        positions = (
+            self.spot_motors.joint_min
+            + (action + 1.0) / 2.0
+            * (
+                self.spot_motors.joint_max
+                - self.spot_motors.joint_min
+            )
+        )
+
+        return positions
+
 
     def reset(self, seed=None, options=None):
 
         super().reset(seed=seed)
 
-        self.state = np.zeros(
-            12,
-            dtype=np.float32
-        )
-
         self.steps = 0
 
-        return self.state.copy(), {}
+        positions = self.spot_motors.get_motor_positions()
 
+        return positions, {}
 
     def step(self, action):
 
         self.steps += 1
 
-        # Teste: move somente o primeiro motor
-        self.spot_motors.set_motor_position(
-            0,
-            0.3
+        target_positions = self._action_to_positions(
+            action
         )
 
-        # Agora deixa o Webots aplicar fisicamente esse comando
+        self.spot_motors.set_motor_positions(
+            target_positions
+        )
+
         status = self.robot.step(
             self.time_step
         )
 
+        positions = (
+            self.spot_motors.get_motor_positions()
+        )
+
         reward = 0.0
 
-        if status == -1:
-            terminated = True
-        else:
-            terminated = False
-
-        if self.steps >= self.max_steps:
-            truncated = True
-        else:
-            truncated = False
+        terminated = status == -1
+        truncated = self.steps >= self.max_steps
 
         return (
-            self.state.copy(),
+            positions,
             reward,
             terminated,
             truncated,
