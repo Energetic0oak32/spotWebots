@@ -47,11 +47,16 @@ class SpotMotors:
 
         self.joint_max = np.array([motor.getMaxPosition() for motor in self.motors], dtype=np.float32)
 
+        # Posições do passo anterior
+        self.previous_positions = None
 
+        #tempo em segundos
+        self.dt = self.time_step / 1000.0
 
     def set_single_motor_position(self, index, position):
         """
-        Teste de documentaçao
+        Muda a posição de um único motor
+        Argumentos -> (indíce do motor [0...11], posição desejada do motor ex: 1.0)
         """
 
         motor = self.motors[index]
@@ -61,6 +66,10 @@ class SpotMotors:
         motor.setPosition(float(position))
 
     def set_motor_positions(self, positions):
+        """
+        Muda a posição de todos os motores em uma única chamada
+        Argumentos -> (array de 12 elementos com todas as posições)
+        """
 
         positions = np.clip(
             positions,
@@ -75,6 +84,9 @@ class SpotMotors:
             motor.setPosition(float(position))
 
     def get_single_motor_position(self, index):
+        """
+        Devolve a posição de um único motor no índice indicado (entre 0 e 11)
+        """
 
         sensor = self.position_sensors[index]
 
@@ -83,7 +95,33 @@ class SpotMotors:
         return position
 
     def get_motor_positions(self):
-
+        """
+        Devolve a posição de todos os motores do robo.
+        """
         positions = np.array([sensor.getValue() for sensor in self.position_sensors], dtype=np.float32)
 
         return positions
+
+    def get_joint_velocities(self):
+        """
+        Retorna a velocidade angular de cada junta em rad/s.
+        """
+
+        current_positions = self.get_motor_positions()
+
+        # Primeira chamada: ainda não temos uma posição anterior
+        if self.previous_positions is None:
+            self.previous_positions = current_positions.copy()
+
+            return np.zeros(
+                len(self.motors),
+                dtype=np.float32
+            )
+
+        velocities = (
+            current_positions - self.previous_positions
+        ) / self.dt
+
+        self.previous_positions = current_positions.copy()
+
+        return velocities.astype(np.float32)
