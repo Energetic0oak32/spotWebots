@@ -102,15 +102,13 @@ class SpotMotors:
 
         return positions
 
-    def get_joint_velocities(self):
+    def get_joint_velocities(self, current_positions):
         """
         Retorna a velocidade angular de cada junta em rad/s.
         """
 
-        current_positions = self.get_motor_positions()
-
-        # Primeira chamada: ainda não temos uma posição anterior
         if self.previous_positions is None:
+
             self.previous_positions = current_positions.copy()
 
             return np.zeros(
@@ -119,7 +117,8 @@ class SpotMotors:
             )
 
         velocities = (
-            current_positions - self.previous_positions
+            current_positions
+            - self.previous_positions
         ) / self.dt
 
         self.previous_positions = current_positions.copy()

@@ -4,6 +4,7 @@ import gymnasium as gym
 from gymnasium import spaces
 from controller import Supervisor
 from motors import SpotMotors
+from sensors import SpotSensors
 
 class SpotEnv(gym.Env):
 
@@ -18,6 +19,9 @@ class SpotEnv(gym.Env):
         self.spot_motors = SpotMotors(self.robot, self.time_step)
         #instancia a classe de motors (inicia-los, move-los, etc...)
 
+        self.spot_sensors = SpotSensors(self.robot, self.time_step)
+        #instancia a classe de sensores (iniciar, ler, yaw, roll, pitch, etc...)
+
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
@@ -25,10 +29,30 @@ class SpotEnv(gym.Env):
             dtype=np.float32
         )
 
+        position_low = self.spot_motors.joint_min
+        position_high = self.spot_motors.joint_max
+
+        velocity_low = np.full(
+            12,
+            -np.inf,
+            dtype=np.float32
+        )
+
+        velocity_high = np.full(
+            12,
+            np.inf,
+            dtype=np.float32
+        )
+
         self.observation_space = spaces.Box(
-            low=self.spot_motors.joint_min,
-            high=self.spot_motors.joint_max,
-            shape=(24,)
+            low=np.concatenate([
+                position_low,
+                velocity_low
+            ]),
+            high=np.concatenate([
+                position_high,
+                velocity_high
+            ]),
             dtype=np.float32
         )
 
@@ -59,24 +83,31 @@ class SpotEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         """
-        reseta a simulação (pode ser usado para encerrar uma simulação inteira, ou encerrar um episódio)
-        retorna obs e info.
+        Inicia um novo episódio e retorna
+        a observação inicial e info.
         """
 
         super().reset(seed=seed)
 
         self.steps = 0
 
-        positions = self.spot_motors.get_motor_positions()
+        #limpa o historico
         self.spot_motors.previous_positions = None
 
-        return positions, {}
+        positions = self.spot_motors.get_motor_positions()
+
+        velocities = self.spot_motors.get_joint_velocities(
+            positions
+        )
+
+        observation = np.concatenate([
+            positions,
+            velocities
+        ])
+
+        return observation, {}
 
     def step(self, action):
-        """
-        Avança um passo da simulação retorna
-        positions(posição dos motors), reward, terminated, truncated, {} (info)
-        """
 
         self.steps += 1
 
@@ -92,9 +123,26 @@ class SpotEnv(gym.Env):
             self.time_step
         )
 
+        orientation = self.spot_sensors.get_orientation()
+
+        print("Roll:", orientation[0])
+        print("Pitch:", orientation[1])
+        print("Yaw:", orientation[2])
+
         positions = (
             self.spot_motors.get_motor_positions()
         )
+
+        velocities = (
+            self.spot_motors.get_joint_velocities(
+                positions
+            )
+        )
+
+        observation = np.concatenate([
+            positions,
+            velocities
+        ])
 
         reward = 0.0
 
@@ -102,7 +150,7 @@ class SpotEnv(gym.Env):
         truncated = self.steps >= self.max_steps
 
         return (
-            positions,
+            observation,
             reward,
             terminated,
             truncated,
