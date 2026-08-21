@@ -32,26 +32,27 @@ class SpotEnv(gym.Env):
         position_low = self.spot_motors.joint_min
         position_high = self.spot_motors.joint_max
 
-        velocity_low = np.full(
-            12,
-            -np.inf,
-            dtype=np.float32
-        )
+        velocity_low = np.full(12, -np.inf, dtype=np.float32)
+        velocity_high = np.full(12, np.inf, dtype=np.float32)
 
-        velocity_high = np.full(
-            12,
-            np.inf,
-            dtype=np.float32
-        )
+        orientation_low = np.full(6, -1.0, dtype=np.float32)
+        orientation_high = np.full(6, 1.0, dtype=np.float32)
+
+        gyro_low = np.full(3, -np.inf, dtype=np.float32)
+        gyro_high = np.full(3, np.inf, dtype=np.float32)
 
         self.observation_space = spaces.Box(
             low=np.concatenate([
                 position_low,
-                velocity_low
+                velocity_low,
+                orientation_low,
+                gyro_low
             ]),
             high=np.concatenate([
                 position_high,
-                velocity_high
+                velocity_high,
+                orientation_high,
+                gyro_high
             ]),
             dtype=np.float32
         )
@@ -80,18 +81,16 @@ class SpotEnv(gym.Env):
 
         return positions
 
-
     def reset(self, seed=None, options=None):
         """
         Inicia um novo episódio e retorna
         a observação inicial e info.
         """
-
         super().reset(seed=seed)
 
         self.steps = 0
+        self.robot.step(self.time_step)
 
-        #limpa o historico
         self.spot_motors.previous_positions = None
 
         positions = self.spot_motors.get_motor_positions()
@@ -100,9 +99,19 @@ class SpotEnv(gym.Env):
             positions
         )
 
+        orientation_features = (
+            self.spot_sensors.get_orientation_features()
+        )
+
+        angular_velocity = (
+            self.spot_sensors.get_angular_velocity()
+        )
+
         observation = np.concatenate([
             positions,
-            velocities
+            velocities,
+            orientation_features,
+            angular_velocity
         ])
 
         return observation, {}
@@ -123,11 +132,9 @@ class SpotEnv(gym.Env):
             self.time_step
         )
 
-        orientation = self.spot_sensors.get_orientation()
-
-        print("Roll:", orientation[0])
-        print("Pitch:", orientation[1])
-        print("Yaw:", orientation[2])
+        orientation_features = (
+            self.spot_sensors.get_orientation_features()
+        )
 
         positions = (
             self.spot_motors.get_motor_positions()
@@ -139,9 +146,15 @@ class SpotEnv(gym.Env):
             )
         )
 
+        angular_velocity = (
+            self.spot_sensors.get_angular_velocity()
+        )
+
         observation = np.concatenate([
             positions,
-            velocities
+            velocities,
+            orientation_features,
+            angular_velocity
         ])
 
         reward = 0.0
