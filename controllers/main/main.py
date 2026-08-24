@@ -1,22 +1,21 @@
 from spot_env import SpotEnv
 
+from stable_baselines3 import PPO
+from stable_baselines3.common.monitor import Monitor
+
+
 env = SpotEnv()
 
-obs, info = env.reset()
+env = Monitor(env)
 
-print("Estado inicial: ")
-print(obs)
+model = PPO(
+    "MlpPolicy",
+    env,
+    verbose=1
+)
 
+model.learn(
+    total_timesteps=10_000
+)
 
-for i in range(1000):
-
-    action = env.action_space.sample()
-
-    obs, reward, terminated, truncated, info = (
-        env.step(action)
-    )
-
-    print("Step:", i)
-
-    if terminated or truncated:
-        break
+model.save("ppo_spot_test")

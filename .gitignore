@@ -1,6 +1,35 @@
-﻿.venv/
+﻿# =========================
+# Python
+# =========================
+.venv/
+__pycache__/
+*.pyc
+
+# =========================
+# Webots
+# =========================
 .protos/
 .plugins/
 .libraries/
-__pycache__/
-*.pyc
+
+# =========================
+# Modelos treinados
+# Stable-Baselines3 salva em .zip
+# =========================
+*.zip
+
+# Caso passemos a organizar modelos em pastas
+models/
+checkpoints/
+
+# =========================
+# Logs de treinamento
+# =========================
+logs/
+tensorboard/
+runs/
+
+# =========================
+# Arquivos temporários
+# =========================
+*.log
