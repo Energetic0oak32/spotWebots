@@ -1,24 +1,32 @@
+import os
+from pathlib import Path
+
 from stable_baselines3 import PPO
 from spot_env import SpotEnv
 
 env = SpotEnv()
 
-model = PPO.load(
-    "ppo_spot_test"
-)
+CURRENT_DIR = Path(__file__).resolve().parent
+os.chdir(CURRENT_DIR)
 
-obs, info = env.reset()
+if os.path.exists("../main/ppo_spot.zip"):
+    model = PPO.load("../main/ppo_spot")
 
-while True:
+    obs, info = env.reset()
 
-    action, _ = model.predict(
-        obs,
-        deterministic=True
-    )
+    while True:
 
-    obs, reward, terminated, truncated, info = (
-        env.step(action)
-    )
+        action, _ = model.predict(
+            obs,
+            deterministic=True
+        )
 
-    if terminated or truncated:
-        obs, info = env.reset()
+        obs, reward, terminated, truncated, info = (
+            env.step(action)
+        )
+
+        if terminated or truncated:
+            obs, info = env.reset()
+
+else:
+    print("Model not found.")
