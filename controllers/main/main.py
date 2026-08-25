@@ -12,7 +12,7 @@ MODEL_PATH = "ppo_spot"
 env = SpotEnv()
 env = Monitor(env)
 
-total_timesteps = 100_000
+total_timesteps = 1_000_000
 
 if os.path.exists(MODEL_PATH + ".zip"):
 

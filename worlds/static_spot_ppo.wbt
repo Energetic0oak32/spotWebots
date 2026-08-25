@@ -23,6 +23,6 @@ RectangleArena {
   wallHeight 0.5
 }
 Spot {
-  controller "main"
+  controller "test_model"
   supervisor TRUE
 }

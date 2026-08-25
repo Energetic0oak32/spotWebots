@@ -178,6 +178,7 @@ class SpotEnv(gym.Env):
         reward = self._calculate_reward(
             upright,
             local_velocity,
+            angular_velocity,
             fallen
         )
 
@@ -197,8 +198,7 @@ class SpotEnv(gym.Env):
             {}
         )
 
-    def _calculate_reward(self, upright, local_velocity, fallen):
-
+    def _calculate_reward(self, upright, local_velocity, angular_velocity, fallen):
         stability_factor = (
             (upright - self.fall_threshold)
             / (
@@ -214,13 +214,35 @@ class SpotEnv(gym.Env):
         )
 
         forward_velocity = local_velocity[0]
+        vertical_velocity = local_velocity[2]
+
+        if forward_velocity >= 0.0:
+            forward_reward = (
+                forward_velocity
+                * stability_factor
+            )
+        else:
+            forward_reward = forward_velocity
+
+        vertical_penalty = (
+            0.15
+            * abs(vertical_velocity)
+        )
+
+        rotation_penalty = (
+            0.03
+            * np.linalg.norm(
+                angular_velocity
+            )
+        )
 
         reward = (
-            forward_velocity
-            * stability_factor
+            forward_reward
+            - vertical_penalty
+            - rotation_penalty
         )
 
         if fallen:
-            reward -= 5.0
+            reward -= 10.0
 
         return float(reward)
