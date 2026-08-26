@@ -7,7 +7,7 @@ WorldInfo {
 }
 Viewpoint {
   orientation -0.14110192586680217 0.7962205034715802 0.5883223235337436 0.5851719832852755
-  position -11.46730967655424 -4.173008532094536 6.429506636698189
+  position -11.640747142045107 -4.236475549599003 6.523506161757586
 }
 Background {
   skyColor [
@@ -20,7 +20,8 @@ DirectionalLight {
 }
 RectangleArena {
   floorSize 8 8
-  wallHeight 0.5
+  wallThickness 0.2
+  wallHeight 1
 }
 Spot {
   controller "test_model"
