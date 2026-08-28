@@ -1,4 +1,11 @@
-gymnasium==1.1.1
+# Core scientific / RL dependencies
 numpy>=2.0,<3.0
+gymnasium==1.1.1
 stable-baselines3==2.8.0
+
+# Training visualization
 tensorboard==2.20.0
+
+# Note:
+# The Webots `controller` module is provided by Webots itself
+# and should not be installed from PyPI.

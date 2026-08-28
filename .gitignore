@@ -2,34 +2,64 @@
 # Python
 # =========================
 .venv/
+venv/
+env/
+
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # =========================
-# Webots
+# IDE / OS
+# =========================
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# Webots generated/cache
 # =========================
 .protos/
 .plugins/
 .libraries/
 
+# Keep .wbt and .*.wbproj files tracked.
+# Webots uses .wbproj files to store the world perspective/project state.
+
 # =========================
-# Modelos treinados
-# Stable-Baselines3 salva em .zip
+# Trained models
+# Stable-Baselines3 saves models as .zip
 # =========================
 *.zip
 
-# Caso passemos a organizar modelos em pastas
 models/
+Models/
+modelos/
+Modelos/
 checkpoints/
 
+# If trained models are archived under controllers/
+controllers/Modelos/
+
 # =========================
-# Logs de treinamento
+# Training logs
 # =========================
 logs/
 tensorboard/
 runs/
 
-# =========================
-# Arquivos temporários
-# =========================
 *.log
+*monitor.csv
+
+# =========================
+# Temporary / backup files
+# =========================
+*.tmp
+*.bak
+*.swp
+*~

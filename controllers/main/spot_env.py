@@ -94,22 +94,48 @@ class SpotEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         """
-        Inicia um novo episódio e retorna
-        a observação inicial e info.
+        Inicia um novo episódio e restaura dados para a simulação
         """
+
         super().reset(seed=seed)
 
         self.robot.simulationReset()
 
+        self.robot.step(self.time_step)
+
         self.steps = 0
         self.fall_steps = 0
-        
+
+        # Pega o próprio Spot no mundo
+        spot_node = self.robot.getSelf()
+
+        # Pega o campo "rotation"
+        rotation_field = spot_node.getField("rotation")
+
+        # Escolhe um ângulo aleatório entre -180° e +180°
+        random_yaw = self.np_random.uniform(
+            -np.pi,
+            np.pi
+        )
+
+        # Rotação ao redor do eixo Z
+        rotation_field.setSFRotation([
+            0.0,
+            0.0,
+            1.0,
+            float(random_yaw)
+        ])
+
+        # Remove qualquer velocidade/inércia anterior
+        spot_node.resetPhysics()
+
         self.robot.step(self.time_step)
 
         self.spot_motors.previous_positions = None
         self.spot_sensors.previous_position = None
 
         gps_position = self.spot_sensors.get_position()
+        self.target_height = float(gps_position[2])
 
         positions = self.spot_motors.get_motor_positions()
 
@@ -155,6 +181,7 @@ class SpotEnv(gym.Env):
         angular_velocity = (self.spot_sensors.get_angular_velocity())
 
         gps_position = self.spot_sensors.get_position()
+        body_height = gps_position[2]
 
         linear_velocity = (self.spot_sensors.get_linear_velocity(gps_position))
 
@@ -179,48 +206,51 @@ class SpotEnv(gym.Env):
             upright,
             local_velocity,
             angular_velocity,
+            body_height,
             fallen
         )
 
         terminated = fallen or status == -1
         truncated = self.steps >= self.max_steps
 
-        # print("Forward:", local_velocity[0])
-        # print("Upright:", upright)
-        # print("Reward:", reward)
-        # print("Fallen:", fallen)
+        yaw = np.arctan2(
+            orientation_features[4],
+            orientation_features[5]
+        )
+
+        info = {
+            "yaw": yaw,
+            "vx": linear_velocity[0],
+            "vy": linear_velocity[1],
+            "vz": linear_velocity[2],
+            "forward": local_velocity[0],
+            "lateral": local_velocity[1],
+            "upright": upright,
+        }
 
         return (
             observation,
             reward,
             terminated,
             truncated,
-            {}
+            info
         )
 
-    def _calculate_reward(self, upright, local_velocity, angular_velocity, fallen):
-        stability_factor = (
-            (upright - self.fall_threshold)
-            / (
-                self.upright_threshold
-                - self.fall_threshold
-            )
-        )
+    def _calculate_reward(self, upright, local_velocity, angular_velocity, body_height, fallen):
 
-        stability_factor = np.clip(
-            stability_factor,
-            0.0,
-            1.0
-        )
+        stability_factor = ((upright - self.fall_threshold) / (self.upright_threshold - self.fall_threshold))
+
+        stability_factor = np.clip(stability_factor, 0.0, 1.0)
+
+        height_ratio = (body_height / self.target_height)
+
+        height_factor = np.clip(height_ratio, 0.0, 1.0)
 
         forward_velocity = local_velocity[0]
         vertical_velocity = local_velocity[2]
 
         if forward_velocity >= 0.0:
-            forward_reward = (
-                forward_velocity
-                * stability_factor
-            )
+            forward_reward = (forward_velocity * stability_factor * height_factor)
         else:
             forward_reward = forward_velocity
 
@@ -236,11 +266,7 @@ class SpotEnv(gym.Env):
             )
         )
 
-        reward = (
-            forward_reward
-            - vertical_penalty
-            - rotation_penalty
-        )
+        reward = (forward_reward - vertical_penalty - rotation_penalty)
 
         if fallen:
             reward -= 10.0

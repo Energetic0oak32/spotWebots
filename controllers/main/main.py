@@ -1,23 +1,30 @@
 import os
-from pathlib import Path
+import numpy as np
 
 from spot_env import SpotEnv
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 
+TEST = False
+CONTINUE = True
 
 MODEL_PATH = "ppo_spot"
+TOTAL_TIMESTEPS = 100_000
 
 env = SpotEnv()
 env = Monitor(env)
 
-total_timesteps = 1_000_000
-
 if os.path.exists(MODEL_PATH + ".zip"):
 
-    print("Modelo encontrado. Continuando treinamento...")
+    print("Modelo encontrado.")
     model = PPO.load(MODEL_PATH, env=env)
+
+elif TEST:
+
+    print("Nenhum modelo encontrado, teste abortado.")
+    CONTINUE = False
+    TEST = False
 
 else:
 
@@ -25,7 +32,45 @@ else:
     model = PPO("MlpPolicy", env, verbose=1)
 
 
-model.learn(total_timesteps, reset_num_timesteps=False)
+if TEST:
 
-model.save(MODEL_PATH)
-print("Modelo salvo!")
+    obs, info = env.reset()
+
+    step_count = 0
+
+    while True:
+
+        action, _ = model.predict(obs, deterministic=True)
+
+        obs, reward, terminated, truncated, info = env.step(action)
+
+        step_count += 1
+
+        if step_count % 20 == 0:
+
+            print(
+                f"\n"
+                f"Step:     {step_count}\n"
+                f"Yaw:      {np.degrees(info['yaw']):8.2f}°\n"
+                f"Global:   "
+                f"vx={info['vx']:7.3f}  "
+                f"vy={info['vy']:7.3f}  "
+                f"vz={info['vz']:7.3f}\n"
+                f"Local:    "
+                f"forward={info['forward']:7.3f}  "
+                f"lateral={info['lateral']:7.3f}\n"
+                f"Upright:  {info['upright']:7.3f}\n"
+                f"Reward:   {reward:7.3f}"
+            )
+
+        if terminated or truncated:
+            obs, info = env.reset()
+
+
+elif CONTINUE:
+
+    model.learn(TOTAL_TIMESTEPS, reset_num_timesteps=False)
+
+    model.save(MODEL_PATH)
+
+    print("Modelo salvo!")
