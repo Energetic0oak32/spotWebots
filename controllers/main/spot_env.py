@@ -5,6 +5,7 @@ from gymnasium import spaces
 from controller import Supervisor
 from motors import SpotMotors
 from sensors import SpotSensors
+from reward import calculate_reward
 
 class SpotEnv(gym.Env):
 
@@ -41,8 +42,8 @@ class SpotEnv(gym.Env):
         gyro_low = np.full(3, -np.inf, dtype=np.float32)
         gyro_high = np.full(3, np.inf, dtype=np.float32)
 
-        linear_velocity_low = np.full(3, -np.inf, dtype=np.float32)
-        linear_velocity_high = np.full(3, np.inf, dtype=np.float32)
+        local_velocity_low = np.full(3, -np.inf, dtype=np.float32)
+        local_velocity_high = np.full(3, np.inf, dtype=np.float32)
 
         self.observation_space = spaces.Box(
             low=np.concatenate([
@@ -50,14 +51,14 @@ class SpotEnv(gym.Env):
                 velocity_low,
                 orientation_low,
                 gyro_low,
-                linear_velocity_low
+                local_velocity_low
             ]),
             high=np.concatenate([
                 position_high,
                 velocity_high,
                 orientation_high,
                 gyro_high,
-                linear_velocity_high
+                local_velocity_high
             ]),
             dtype=np.float32
         )
@@ -135,7 +136,11 @@ class SpotEnv(gym.Env):
         self.spot_sensors.previous_position = None
 
         gps_position = self.spot_sensors.get_position()
-        self.target_height = float(gps_position[2])
+        self.spawn_height = float(gps_position[2])
+
+        self.target_height = (
+            self.spawn_height * 0.85
+        )
 
         positions = self.spot_motors.get_motor_positions()
 
@@ -147,44 +152,6 @@ class SpotEnv(gym.Env):
 
         linear_velocity = (self.spot_sensors.get_linear_velocity(gps_position))
 
-        observation = np.concatenate([
-            positions,
-            velocities,
-            orientation_features,
-            angular_velocity,
-            linear_velocity
-        ])
-
-        return observation, {}
-
-    def step(self, action):
-        """
-        Roda um passo da simulação, com ação, físicas
-        """
-
-        self.steps += 1
-
-        target_positions = self._action_to_positions(action)
-
-        self.spot_motors.set_motor_positions(target_positions)
-
-        status = self.robot.step(self.time_step)
-
-        orientation_features = (self.spot_sensors.get_orientation_features())
-
-        upright = self.spot_sensors.get_upright(orientation_features)
-
-        positions = (self.spot_motors.get_motor_positions())
-
-        velocities = (self.spot_motors.get_joint_velocities(positions))
-
-        angular_velocity = (self.spot_sensors.get_angular_velocity())
-
-        gps_position = self.spot_sensors.get_position()
-        body_height = gps_position[2]
-
-        linear_velocity = (self.spot_sensors.get_linear_velocity(gps_position))
-
         local_velocity = (self.spot_sensors.get_local_linear_velocity(linear_velocity, orientation_features))
 
         observation = np.concatenate([
@@ -192,24 +159,94 @@ class SpotEnv(gym.Env):
             velocities,
             orientation_features,
             angular_velocity,
-            linear_velocity
+            local_velocity
         ])
 
+        return observation, {}
+
+    def step(self, action):
+        """
+        Executa um passo da simulação.
+        """
+
+        self.steps += 1
+
+        # Aplica ação
+        target_positions = self._action_to_positions(action)
+        self.spot_motors.set_motor_positions(target_positions)
+
+        # Avança a física
+        status = self.robot.step(self.time_step)
+
+        # Lê estado do robô
+        orientation_features = (
+            self.spot_sensors.get_orientation_features()
+        )
+
+        upright = self.spot_sensors.get_upright(
+            orientation_features
+        )
+
+        positions = self.spot_motors.get_motor_positions()
+
+        velocities = self.spot_motors.get_joint_velocities(
+            positions
+        )
+
+        angular_velocity = (
+            self.spot_sensors.get_angular_velocity()
+        )
+
+        gps_position = self.spot_sensors.get_position()
+
+        body_height = gps_position[2]
+
+        linear_velocity = (
+            self.spot_sensors.get_linear_velocity(
+                gps_position
+            )
+        )
+
+        local_velocity = (
+            self.spot_sensors.get_local_linear_velocity(
+                linear_velocity,
+                orientation_features
+            )
+        )
+
+        # Detecta queda
         if upright < self.fall_threshold:
             self.fall_steps += 1
         else:
             self.fall_steps = 0
 
-        fallen = self.fall_steps >= self.fall_steps_limit
-
-        reward = self._calculate_reward(
-            upright,
-            local_velocity,
-            angular_velocity,
-            body_height,
-            fallen
+        fallen = (
+            self.fall_steps
+            >= self.fall_steps_limit
         )
 
+        # Calcula reward
+        reward, reward_info = calculate_reward(
+            local_velocity=local_velocity,
+            angular_velocity=angular_velocity,
+            upright=upright,
+            body_height=body_height,
+            target_height=self.target_height,
+            fall_threshold=self.fall_threshold,
+            upright_threshold=self.upright_threshold,
+            fallen=fallen,
+        )
+
+        # Observação do agente
+        observation = np.concatenate([
+            positions,
+            velocities,
+            orientation_features,
+            angular_velocity,
+            local_velocity
+        ])
+
+        # Finalização do episódio
         terminated = fallen or status == -1
         truncated = self.steps >= self.max_steps
 
@@ -218,14 +255,24 @@ class SpotEnv(gym.Env):
             orientation_features[5]
         )
 
+        # Informações de debug
         info = {
             "yaw": yaw,
+
             "vx": linear_velocity[0],
             "vy": linear_velocity[1],
             "vz": linear_velocity[2],
+
             "forward": local_velocity[0],
             "lateral": local_velocity[1],
+
             "upright": upright,
+            "fallen": fallen,
+
+            "body_height": body_height,
+            "target_height": self.target_height,
+
+            **reward_info,
         }
 
         return (
@@ -235,40 +282,3 @@ class SpotEnv(gym.Env):
             truncated,
             info
         )
-
-    def _calculate_reward(self, upright, local_velocity, angular_velocity, body_height, fallen):
-
-        stability_factor = ((upright - self.fall_threshold) / (self.upright_threshold - self.fall_threshold))
-
-        stability_factor = np.clip(stability_factor, 0.0, 1.0)
-
-        height_ratio = (body_height / self.target_height)
-
-        height_factor = np.clip(height_ratio, 0.0, 1.0)
-
-        forward_velocity = local_velocity[0]
-        vertical_velocity = local_velocity[2]
-
-        if forward_velocity >= 0.0:
-            forward_reward = (forward_velocity * stability_factor * height_factor)
-        else:
-            forward_reward = forward_velocity
-
-        vertical_penalty = (
-            0.15
-            * abs(vertical_velocity)
-        )
-
-        rotation_penalty = (
-            0.03
-            * np.linalg.norm(
-                angular_velocity
-            )
-        )
-
-        reward = (forward_reward - vertical_penalty - rotation_penalty)
-
-        if fallen:
-            reward -= 10.0
-
-        return float(reward)

@@ -99,7 +99,7 @@ class SpotSensors:
 
     def get_linear_velocity(self, current_position):
         """
-        Retorna os valores de deslocamento no eixo X, Y e Z em m/s
+        Retorna as velocidades de deslocamento com o mundo como referencial
         """
 
         if self.previous_position is None:
@@ -122,7 +122,7 @@ class SpotSensors:
 
     def get_local_linear_velocity(self, linear_velocity, orientation_features):
         """
-        Retorna a velocidade relativa ao robô, Velocidade relativa ao Spot: [frente, lateral, vertical]
+        Retorna as velocidades de deslocamento com o robô como referencial [frente, lateral, vertical]
         """
 
         vx = linear_velocity[0]

@@ -43,8 +43,6 @@ class SpotMotors:
 
 
         self.joint_min = np.array([motor.getMinPosition() for motor in self.motors], dtype=np.float32)
-
-
         self.joint_max = np.array([motor.getMaxPosition() for motor in self.motors], dtype=np.float32)
 
         # Posições do passo anterior

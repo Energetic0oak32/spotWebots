@@ -7,7 +7,7 @@ WorldInfo {
 }
 Viewpoint {
   orientation -0.20637559910247547 0.7166266056370367 0.6662247520080842 0.8160206945899523
-  position -9.732782421256053 -6.401193750858271 8.181033275661104
+  position -8.064066747507587 -5.353130055369837 6.830597480974118
 }
 Background {
   skyColor [
@@ -19,7 +19,7 @@ DirectionalLight {
   direction 0.1 -0.5 0.3
 }
 RectangleArena {
-  floorSize 12 12
+  floorSize 120 120
   wallThickness 0.2
   wallHeight 1
 }

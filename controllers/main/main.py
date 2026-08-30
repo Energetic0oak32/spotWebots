@@ -6,11 +6,11 @@ from spot_env import SpotEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 
-TEST = False
+TEST = True
 CONTINUE = True
 
 MODEL_PATH = "ppo_spot"
-TOTAL_TIMESTEPS = 100_000
+TOTAL_TIMESTEPS = 2_000_000
 
 env = SpotEnv()
 env = Monitor(env)
@@ -29,7 +29,12 @@ elif TEST:
 else:
 
     print("Nenhum modelo encontrado. Criando novo PPO...")
-    model = PPO("MlpPolicy", env, verbose=1)
+    model = PPO(
+        "MlpPolicy",
+        env,
+        learning_rate=1e-4,
+        verbose=1
+    )
 
 
 if TEST:
@@ -60,7 +65,11 @@ if TEST:
                 f"forward={info['forward']:7.3f}  "
                 f"lateral={info['lateral']:7.3f}\n"
                 f"Upright:  {info['upright']:7.3f}\n"
-                f"Reward:   {reward:7.3f}"
+                f"Reward:   {reward:7.3f}\n"
+                f"Height:   "
+                f"{info['body_height']:7.3f} / "
+                f"{info['target_height']:7.3f}  "
+                f"factor={info['height_factor']:5.2f}\n"
             )
 
         if terminated or truncated:
