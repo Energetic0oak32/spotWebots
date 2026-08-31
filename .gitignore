@@ -22,6 +22,9 @@ debuging/
 .DS_Store
 Thumbs.db
 desktop.ini
+spot_manager_config.json
+# Training runtime signals
+training/.stop_training
 
 # =========================
 # Webots generated/cache
@@ -30,8 +33,9 @@ desktop.ini
 .plugins/
 .libraries/
 
-# Keep .wbt and .*.wbproj files tracked.
-# Webots uses .wbproj files to store the world perspective/project state.
+# Webots generated world metadata / previews
+worlds/.*.wbproj
+worlds/.*.jpg
 
 # =========================
 # Trained models

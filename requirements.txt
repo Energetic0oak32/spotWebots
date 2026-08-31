@@ -6,6 +6,9 @@ stable-baselines3==2.8.0
 # Training visualization
 tensorboard==2.20.0
 
+# Desktop GUI
+PySide6
+
 # Note:
 # The Webots `controller` module is provided by Webots itself
 # and should not be installed from PyPI.
