@@ -18,6 +18,7 @@ __pycache__/
 # =========================
 .idea/
 .vscode/
+debuging/
 .DS_Store
 Thumbs.db
 desktop.ini

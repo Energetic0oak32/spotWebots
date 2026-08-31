@@ -6,11 +6,11 @@ from spot_env import SpotEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 
-TEST = True
+TEST = False
 CONTINUE = True
 
 MODEL_PATH = "ppo_spot"
-TOTAL_TIMESTEPS = 2_000_000
+TOTAL_TIMESTEPS = 500_000
 
 env = SpotEnv()
 env = Monitor(env)
@@ -18,7 +18,7 @@ env = Monitor(env)
 if os.path.exists(MODEL_PATH + ".zip"):
 
     print("Modelo encontrado.")
-    model = PPO.load(MODEL_PATH, env=env)
+    model = PPO.load(MODEL_PATH, env=env, custom_objects={"learning_rate": 5e-5})
 
 elif TEST:
 
@@ -32,7 +32,7 @@ else:
     model = PPO(
         "MlpPolicy",
         env,
-        learning_rate=1e-4,
+        learning_rate = 5e-5,
         verbose=1
     )
 
@@ -70,6 +70,13 @@ if TEST:
                 f"{info['body_height']:7.3f} / "
                 f"{info['target_height']:7.3f}  "
                 f"factor={info['height_factor']:5.2f}\n"
+                f"Action rate penalty: "
+                f"{info['action_rate_penalty']:7.5f}\n"
+                f"Forward reward:       {info['forward_reward']:7.3f}\n"
+                f"Vertical penalty:     {info['vertical_penalty']:7.3f}\n"
+                f"Rotation penalty:     {info['rotation_penalty']:7.3f}\n"
+                f"Action rate penalty:  {info['action_rate_penalty']:7.3f}\n"
+                
             )
 
         if terminated or truncated:

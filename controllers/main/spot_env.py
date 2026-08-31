@@ -15,12 +15,16 @@ class SpotEnv(gym.Env):
 
         self.robot = Supervisor()   #instancia o robo supervisor
 
-        self.time_step = int(self.robot.getBasicTimeStep()) #timestep
+        self.physics_step = int(
+            self.robot.getBasicTimeStep()
+        )
 
-        self.spot_motors = SpotMotors(self.robot, self.time_step)
+        self.control_step = 32
+
+        self.spot_motors = SpotMotors(self.robot, self.control_step)
         #instancia a classe de motors (inicia-los, move-los, etc...)
 
-        self.spot_sensors = SpotSensors(self.robot, self.time_step)
+        self.spot_sensors = SpotSensors(self.robot, self.control_step)
         #instancia a classe de sensores (iniciar, ler, yaw, roll, pitch, etc...)
 
         self.action_space = spaces.Box(
@@ -30,36 +34,12 @@ class SpotEnv(gym.Env):
             dtype=np.float32
         )
 
-        position_low = self.spot_motors.joint_min
-        position_high = self.spot_motors.joint_max
-
-        velocity_low = np.full(12, -np.inf, dtype=np.float32)
-        velocity_high = np.full(12, np.inf, dtype=np.float32)
-
-        orientation_low = np.full(6, -1.0, dtype=np.float32)
-        orientation_high = np.full(6, 1.0, dtype=np.float32)
-
-        gyro_low = np.full(3, -np.inf, dtype=np.float32)
-        gyro_high = np.full(3, np.inf, dtype=np.float32)
-
-        local_velocity_low = np.full(3, -np.inf, dtype=np.float32)
-        local_velocity_high = np.full(3, np.inf, dtype=np.float32)
-
+        self.previous_vertical_velocity = 0.0
+               
         self.observation_space = spaces.Box(
-            low=np.concatenate([
-                position_low,
-                velocity_low,
-                orientation_low,
-                gyro_low,
-                local_velocity_low
-            ]),
-            high=np.concatenate([
-                position_high,
-                velocity_high,
-                orientation_high,
-                gyro_high,
-                local_velocity_high
-            ]),
+            low=-1.0,
+            high=1.0,
+            shape=(48,),
             dtype=np.float32
         )
 
@@ -71,6 +51,8 @@ class SpotEnv(gym.Env):
 
         self.fall_steps = 0
         self.fall_steps_limit = 3
+
+        self.last_action = np.zeros(12, dtype=np.float32)
 
     def _action_to_positions(self, action):
         """
@@ -93,6 +75,109 @@ class SpotEnv(gym.Env):
 
         return positions
 
+    def _normalize_joint_positions(self, positions):
+
+        normalized = (
+            2.0
+            * (positions - self.spot_motors.joint_min)
+            / (
+                self.spot_motors.joint_max
+                - self.spot_motors.joint_min
+            )
+            - 1.0
+        )
+
+        return np.clip(
+            normalized,
+            -1.0,
+            1.0
+        ).astype(np.float32)
+
+
+    def _normalize_joint_velocities(self, velocities):
+
+        normalized = (
+            velocities
+            / self.spot_motors.joint_max_velocity
+        )
+
+        return np.clip(
+            normalized,
+            -1.0,
+            1.0
+        ).astype(np.float32)
+
+
+    def _normalize_angular_velocity(self, angular_velocity):
+
+        scale = 10.0
+
+        normalized = (
+            angular_velocity
+            / scale
+        )
+
+        return np.clip(
+            normalized,
+            -1.0,
+            1.0
+        ).astype(np.float32)
+
+
+    def _normalize_local_velocity(self, local_velocity):
+
+        scale = np.array(
+            [4.0, 4.0, 2.0],
+            dtype=np.float32
+        )
+
+        normalized = (
+            local_velocity
+            / scale
+        )
+
+        return np.clip(
+            normalized,
+            -1.0,
+            1.0
+        ).astype(np.float32)
+
+    def _build_observation(
+            self,
+            positions,
+            velocities,
+            orientation_features,
+            angular_velocity,
+            local_velocity
+        ):
+
+        normalized_positions = (
+            self._normalize_joint_positions(positions)
+        )
+
+        normalized_velocities = (
+            self._normalize_joint_velocities(velocities)
+        )
+
+        normalized_angular_velocity = (
+            self._normalize_angular_velocity(angular_velocity)
+        )
+
+        normalized_local_velocity = (
+            self._normalize_local_velocity(local_velocity)
+        )
+
+        observation = np.concatenate([
+            normalized_positions,
+            normalized_velocities,
+            orientation_features,
+            normalized_angular_velocity,
+            normalized_local_velocity,
+            self.last_action
+        ])
+
+        return observation.astype(np.float32)
+
     def reset(self, seed=None, options=None):
         """
         Inicia um novo episódio e restaura dados para a simulação
@@ -102,7 +187,7 @@ class SpotEnv(gym.Env):
 
         self.robot.simulationReset()
 
-        self.robot.step(self.time_step)
+        self.robot.step(self.control_step)
 
         self.steps = 0
         self.fall_steps = 0
@@ -130,13 +215,15 @@ class SpotEnv(gym.Env):
         # Remove qualquer velocidade/inércia anterior
         spot_node.resetPhysics()
 
-        self.robot.step(self.time_step)
+        self.robot.step(self.control_step)
 
         self.spot_motors.previous_positions = None
         self.spot_sensors.previous_position = None
 
         gps_position = self.spot_sensors.get_position()
         self.spawn_height = float(gps_position[2])
+
+        self.previous_vertical_velocity = 0.0
 
         self.target_height = (
             self.spawn_height * 0.85
@@ -154,13 +241,15 @@ class SpotEnv(gym.Env):
 
         local_velocity = (self.spot_sensors.get_local_linear_velocity(linear_velocity, orientation_features))
 
-        observation = np.concatenate([
+        self.last_action = np.zeros(12, dtype=np.float32)
+
+        observation = self._build_observation(
             positions,
             velocities,
             orientation_features,
             angular_velocity,
             local_velocity
-        ])
+        )
 
         return observation, {}
 
@@ -169,49 +258,34 @@ class SpotEnv(gym.Env):
         Executa um passo da simulação.
         """
 
+        #apenas para garantir float32
+        action = np.asarray(
+            action,
+            dtype=np.float32
+        )
+
         self.steps += 1
 
-        # Aplica ação
+        # 1. Converte a ação normalizada (-1 a 1) enviada pelo agente para radianos
         target_positions = self._action_to_positions(action)
         self.spot_motors.set_motor_positions(target_positions)
 
-        # Avança a física
-        status = self.robot.step(self.time_step)
-
-        # Lê estado do robô
-        orientation_features = (
-            self.spot_sensors.get_orientation_features()
+        # 2. Avança a física do Webots
+        status = self.robot.step(
+            self.control_step
         )
 
-        upright = self.spot_sensors.get_upright(
-            orientation_features
-        )
-
+        # 3. Lê o novo estado do robô após o movimento
+        orientation_features = self.spot_sensors.get_orientation_features()
+        upright = self.spot_sensors.get_upright(orientation_features)
         positions = self.spot_motors.get_motor_positions()
-
-        velocities = self.spot_motors.get_joint_velocities(
-            positions
-        )
-
-        angular_velocity = (
-            self.spot_sensors.get_angular_velocity()
-        )
-
+        velocities = self.spot_motors.get_joint_velocities(positions)
+        angular_velocity = self.spot_sensors.get_angular_velocity()
         gps_position = self.spot_sensors.get_position()
-
         body_height = gps_position[2]
-
-        linear_velocity = (
-            self.spot_sensors.get_linear_velocity(
-                gps_position
-            )
-        )
-
-        local_velocity = (
-            self.spot_sensors.get_local_linear_velocity(
-                linear_velocity,
-                orientation_features
-            )
+        linear_velocity = self.spot_sensors.get_linear_velocity(gps_position)
+        local_velocity = self.spot_sensors.get_local_linear_velocity(
+            linear_velocity, orientation_features
         )
 
         # Detecta queda
@@ -220,12 +294,10 @@ class SpotEnv(gym.Env):
         else:
             self.fall_steps = 0
 
-        fallen = (
-            self.fall_steps
-            >= self.fall_steps_limit
-        )
+        fallen = self.fall_steps >= self.fall_steps_limit
 
-        # Calcula reward
+        # 4. Calcula a recompensa usando a ação ATUAL (passada como argumento)
+        # e a ação ANTERIOR salva no atributo da classe
         reward, reward_info = calculate_reward(
             local_velocity=local_velocity,
             angular_velocity=angular_velocity,
@@ -235,50 +307,45 @@ class SpotEnv(gym.Env):
             fall_threshold=self.fall_threshold,
             upright_threshold=self.upright_threshold,
             fallen=fallen,
+            current_action=action,          # Ação atual enviada pelo agente (-1 a 1)
+            previous_action=self.last_action, # A ação que estava salva do passo anterior (-1 a 1)
+            previous_vertical_velocity=self.previous_vertical_velocity
         )
 
-        # Observação do agente
-        observation = np.concatenate([
+        # 5. IMPORTANTE: Atualiza o histórico salvando a ação atual para o próximo passo
+        # Usamos .copy() para evitar problemas de referência de memória
+        self.last_action = np.array(action, dtype=np.float32).copy()
+
+        self.previous_vertical_velocity = float(local_velocity[2])
+
+        # 6. Constrói a observação. 
+        observation = self._build_observation(
             positions,
             velocities,
             orientation_features,
             angular_velocity,
             local_velocity
-        ])
+        )
 
         # Finalização do episódio
         terminated = fallen or status == -1
         truncated = self.steps >= self.max_steps
 
-        yaw = np.arctan2(
-            orientation_features[4],
-            orientation_features[5]
-        )
+        yaw = np.arctan2(orientation_features[4], orientation_features[5])
 
         # Informações de debug
         info = {
             "yaw": yaw,
-
             "vx": linear_velocity[0],
             "vy": linear_velocity[1],
             "vz": linear_velocity[2],
-
             "forward": local_velocity[0],
             "lateral": local_velocity[1],
-
             "upright": upright,
             "fallen": fallen,
-
             "body_height": body_height,
             "target_height": self.target_height,
-
             **reward_info,
         }
 
-        return (
-            observation,
-            reward,
-            terminated,
-            truncated,
-            info
-        )
+        return observation, reward, terminated, truncated, info

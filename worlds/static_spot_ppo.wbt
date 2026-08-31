@@ -4,10 +4,14 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/boston_dynamics/spot/protos/Spot.proto"
 
 WorldInfo {
+  info [
+    "basicTimeStep 8"
+  ]
+  basicTimeStep 8
 }
 Viewpoint {
   orientation -0.20637559910247547 0.7166266056370367 0.6662247520080842 0.8160206945899523
-  position -8.064066747507587 -5.353130055369837 6.830597480974118
+  position -7.0290811330735865 -4.703090707801152 5.993018232030995
 }
 Background {
   skyColor [
