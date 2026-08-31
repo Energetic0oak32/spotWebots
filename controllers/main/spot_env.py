@@ -21,6 +21,8 @@ class SpotEnv(gym.Env):
 
         self.control_step = 32
 
+        self.min_height_ratio = 0.35
+
         self.spot_motors = SpotMotors(self.robot, self.control_step)
         #instancia a classe de motors (inicia-los, move-los, etc...)
 
@@ -289,12 +291,28 @@ class SpotEnv(gym.Env):
         )
 
         # Detecta queda
-        if upright < self.fall_threshold:
+        min_body_height = (
+            self.target_height
+            * self.min_height_ratio
+        )
+
+        bad_orientation = (
+            upright < self.fall_threshold
+        )
+
+        too_low = (
+            body_height < min_body_height
+        )
+
+        if bad_orientation or too_low:
             self.fall_steps += 1
         else:
             self.fall_steps = 0
 
-        fallen = self.fall_steps >= self.fall_steps_limit
+        fallen = (
+            self.fall_steps
+            >= self.fall_steps_limit
+        )
 
         # 4. Calcula a recompensa usando a ação ATUAL (passada como argumento)
         # e a ação ANTERIOR salva no atributo da classe

@@ -37,7 +37,7 @@ def calculate_reward(
     #o quanto da altura ideal estamos atingindo (debug)
     height_ratio = body_height / target_height
 
-    #controla como iremos colocar o ratio de altura na reward, de forma cubica, quadratica e etc, usando uma curva gaussiana para evitar recompensas ao pular alto demais.
+    #controla a reward baseado no quão distante está da altura ideal; Utiliza uma curva gaussiana
     curve_radius = 0.15 
     height_factor = np.exp(-((body_height - target_height) / curve_radius) ** 2)
 

@@ -6,7 +6,7 @@ from spot_env import SpotEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 
-TEST = False
+TEST = True
 CONTINUE = True
 
 MODEL_PATH = "ppo_spot"
