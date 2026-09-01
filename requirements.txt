@@ -6,6 +6,9 @@ stable-baselines3==2.8.0
 # Training visualization
 tensorboard==2.20.0
 
+# Packaging compatibility
+setuptools<82
+
 # Desktop GUI
 PySide6
 
