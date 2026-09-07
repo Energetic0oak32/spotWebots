@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QComboBox,
     QCheckBox,
+    QScrollArea,
 )
 
 from config import load_config, save_config
@@ -39,7 +40,8 @@ class SpotManager(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Webots RL Trainer")
-        self.resize(750, 650)
+        self.resize(700, 580)
+        self.setMinimumSize(600, 450)
 
         self.config = load_config()
 
@@ -437,6 +439,12 @@ class SpotManager(QMainWindow):
 
         config = self.get_config()
 
+        if not config["output_model_path"].strip():
+            self.status_label.setText(
+                "Informe o caminho do modelo de saída."
+            )
+            return
+
         seed = self.resolve_seed(
             config
         )
@@ -517,6 +525,11 @@ class SpotManager(QMainWindow):
             str(
                 config["model_path"]
             ),
+
+            "--output-model-path",
+            str(
+                config["output_model_path"]
+            ),
         ]
 
         self.log_output.clear()
@@ -574,7 +587,13 @@ class SpotManager(QMainWindow):
         )
 
         self.log_output.append(
-            f"Modelo: {config['model_path']}"
+            f"Modelo de origem: "
+            f"{config['model_path']}"
+        )
+
+        self.log_output.append(
+            f"Modelo de saída: "
+            f"{config['output_model_path']}"
         )
 
         self.log_output.append(
@@ -1027,11 +1046,36 @@ class SpotManager(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
 
-        main_layout = QVBoxLayout(central_widget)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+
+        central_widget = QWidget()
+
+        scroll_area.setWidget(
+            central_widget
+        )
+
+        self.setCentralWidget(
+            scroll_area
+        )
+
+        main_layout = QVBoxLayout(
+            central_widget
+        )
+
+        main_layout.setContentsMargins(
+            8,
+            8,
+            8,
+            8,
+        )
+
+        main_layout.setSpacing(6)
+
         form = QFormLayout()
+
+        form.setVerticalSpacing(5)
 
         # Robot
         self.robot_input = QComboBox()
@@ -1084,6 +1128,30 @@ class SpotManager(QMainWindow):
         form.addRow(
             "Modelo:",
             model_row,
+        )
+
+        # Output model
+        self.output_model_input = QLineEdit()
+
+        output_model_row = QHBoxLayout()
+        output_model_row.addWidget(
+            self.output_model_input
+        )
+
+        output_model_button = QPushButton(
+            "Salvar como..."
+        )
+        output_model_button.clicked.connect(
+            self.select_output_model
+        )
+
+        output_model_row.addWidget(
+            output_model_button
+        )
+
+        form.addRow(
+            "Modelo de saída:",
+            output_model_row,
         )
 
         self.model_status_label = QLabel(
@@ -1376,7 +1444,7 @@ class SpotManager(QMainWindow):
         # Log
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
-        self.log_output.setMinimumHeight(220)
+        self.log_output.setMinimumHeight(120)
         main_layout.addWidget(self.log_output)
 
         self.status_label = QLabel(
@@ -1409,6 +1477,13 @@ class SpotManager(QMainWindow):
 
         self.model_input.setText(
             self.config["model_path"]
+        )
+
+        self.output_model_input.setText(
+            self.config.get(
+                "output_model_path",
+                self.config["model_path"],
+            )
         )
 
         # Robot
@@ -1531,6 +1606,10 @@ class SpotManager(QMainWindow):
 
         config["model_path"] = (
             self.model_input.text()
+        )
+
+        config["output_model_path"] = (
+            self.output_model_input.text()
         )
 
         config["instances"] = (
@@ -1758,6 +1837,25 @@ class SpotManager(QMainWindow):
         self.model_input.setText(path)
 
         self.inspect_selected_model()
+
+    def select_output_model(self):
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Salvar modelo treinado como",
+            str(PROJECT_ROOT / "models"),
+            "Stable-Baselines3 (*.zip)",
+        )
+
+        if not path:
+            return
+
+        if not path.lower().endswith(".zip"):
+            path += ".zip"
+
+        self.output_model_input.setText(
+            path
+        )
 
     def inspect_selected_model(self):
 

@@ -95,16 +95,33 @@ class RunSession:
         # a seed realmente utilizada.
         effective_config["seed"] = seed
 
-        model_path = Path(
+        input_model_path = Path(
             config["model_path"]
         )
 
         if (
-            model_path.suffix.lower()
+            input_model_path.suffix.lower()
             != ".zip"
         ):
-            model_path = Path(
-                str(model_path)
+            input_model_path = Path(
+                str(input_model_path)
+                + ".zip"
+            )
+
+
+        output_model_path = Path(
+            config.get(
+                "output_model_path",
+                config["model_path"],
+            )
+        )
+
+        if (
+            output_model_path.suffix.lower()
+            != ".zip"
+        ):
+            output_model_path = Path(
+                str(output_model_path)
                 + ".zip"
             )
 
@@ -144,11 +161,17 @@ class RunSession:
             "instances":
                 len(ports),
 
-            "model_path":
-                str(model_path),
+            "input_model_path":
+                str(input_model_path),
 
-            "model_existed_at_start":
-                model_path.is_file(),
+            "output_model_path":
+                str(output_model_path),
+
+            "input_model_existed_at_start":
+                input_model_path.is_file(),
+
+            "output_model_existed_at_start":
+                output_model_path.is_file(),
 
             "world_path":
                 config["world_path"],

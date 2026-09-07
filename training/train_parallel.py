@@ -114,6 +114,12 @@ def parse_args():
         default=str(DEFAULT_MODEL_PATH)
     )
 
+    parser.add_argument(
+        "--output-model-path",
+        type=str,
+        default=None
+    )
+
     return parser.parse_args()
 
 
@@ -121,12 +127,28 @@ def main():
 
     args = parse_args()
 
-    model_path = Path(args.model_path)
+    input_model_path = Path(
+        args.model_path
+    )
 
-    if model_path.suffix.lower() == ".zip":
-        model_path = model_path.with_suffix("")
+    if input_model_path.suffix.lower() == ".zip":
+        input_model_path = (
+            input_model_path.with_suffix("")
+        )
 
-    model_path.parent.mkdir(
+    if args.output_model_path:
+        output_model_path = Path(
+            args.output_model_path
+        )
+
+        if output_model_path.suffix.lower() == ".zip":
+            output_model_path = (
+                output_model_path.with_suffix("")
+            )
+    else:
+        output_model_path = input_model_path
+
+    output_model_path.parent.mkdir(
         parents=True,
         exist_ok=True
     )
@@ -179,7 +201,13 @@ def main():
     )
 
     print(
-        f"Modelo: {model_path}"
+        f"Modelo de origem: "
+        f"{input_model_path}"
+    )
+
+    print(
+        f"Modelo de saída: "
+        f"{output_model_path}"
     )
 
     print(
@@ -192,7 +220,7 @@ def main():
     try:
 
         model_zip = Path(
-            str(model_path) + ".zip"
+            str(input_model_path) + ".zip"
         )
 
         if model_zip.exists():
@@ -203,7 +231,7 @@ def main():
             )
 
             model = PPO.load(
-                str(model_path),
+                str(input_model_path),
                 env=env,
                 custom_objects={
                     "learning_rate":
@@ -263,6 +291,12 @@ def main():
             args.seed
         )
 
+        # Modelos carregados podem trazer um tensorboard_log antigo
+        # salvo dentro do .zip. Força o diretório atual do projeto.
+        model.tensorboard_log = str(
+            TENSORBOARD_PATH
+        )
+
         print(
             "\n=== CONFIGURAÇÃO EFETIVA DO MODELO ==="
         )
@@ -312,11 +346,12 @@ def main():
         )
 
         model.save(
-            str(model_path)
+            str(output_model_path)
         )
 
         print(
-            "Modelo salvo!"
+            f"Modelo salvo em: "
+            f"{output_model_path}.zip"
         )
 
     finally:

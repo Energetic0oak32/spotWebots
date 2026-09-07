@@ -1,12 +1,39 @@
-# Spot Webots PPO
+# Webots RL Interface
 
-Reinforcement learning environment for training a Spot-like quadruped robot in Webots using Gymnasium and Stable-Baselines3 PPO.
+A reinforcement-learning interface for training and evaluating robots in Webots with Gymnasium and Stable-Baselines3.
 
-The current documented workflow focuses on **parallel PPO training across multiple independent Webots simulations**. A legacy single-instance runner remains under `controllers/main/main.py`, but the parallel training infrastructure and Spot Training Manager are the primary development path.
+The current MVP focuses on a Spot-like quadruped trained with PPO. It supports parallel Webots instances, GUI-based configuration, model inspection, compatibility checks, deterministic testing, experiment metadata, and controlled failure handling.
 
-## Overview
+> **Current status:** Spot + PPO MVP validated.
 
-The environment gives the PPO policy continuous control over the robot's 12 actuated joints.
+## Current MVP
+
+The current implementation supports:
+
+- Spot-like quadruped environment in Webots
+- Stable-Baselines3 PPO
+- continuous control of 12 actuated joints
+- 48-dimensional observation space
+- parallel training with multiple Webots instances
+- configurable PPO hyperparameters
+- fixed or randomized seeds
+- loading and continuing an existing model
+- creating a new PPO model from scratch
+- separate input and output model paths
+- model inspection
+- environment/model compatibility checks
+- deterministic evaluation
+- graceful training stop with model saving
+- live trainer/test output in the GUI
+- TensorBoard logging
+- per-run configuration snapshots
+- per-run logs and metadata
+- worker/Webots disconnect detection
+- controlled failure handling when a simulation instance is closed
+
+The GUI currently exposes **Spot + PPO** only. Support for additional robots and algorithms is planned after this MVP.
+
+## Spot environment
 
 Current environment configuration:
 
@@ -18,18 +45,20 @@ Current environment configuration:
 - **Maximum episode length:** 1000 control steps
 - **Default learning rate:** `5e-5`
 
-The current observation includes:
+The observation currently includes:
 
-- 12 normalized joint positions;
-- 12 normalized joint velocities;
-- 6 orientation features;
-- 3 normalized angular velocities;
-- 3 normalized local linear velocities;
-- 12 previous-action values.
+- 12 normalized joint positions
+- 12 normalized joint velocities
+- 6 orientation features
+- 3 normalized angular velocities
+- 3 normalized local linear velocities
+- 12 previous-action values
+
+The reward and locomotion logic remain robot-specific and live under `controllers/main/`.
 
 ## Parallel training
 
-Parallel training uses multiple independent Webots processes controlled by a single PPO policy.
+Parallel training uses multiple independent Webots simulations controlled by one PPO model.
 
 ```text
                          PPO
@@ -46,18 +75,16 @@ Parallel training uses multiple independent Webots processes controlled by a sin
 
 Each Webots instance runs its own `SpotEnv`.
 
-`WebotsVecEnv` sends actions to all environments before waiting for their responses, allowing the independent simulations to advance concurrently.
-
 For `N` environments, the effective PPO rollout size is:
 
 ```text
 rollout_size = N * n_steps
 ```
 
-For example:
+Example:
 
 ```text
-2 environments × 1024 n_steps = 2048 samples
+2 environments × 512 n_steps = 1024 samples
 ```
 
 ## Project structure
@@ -68,11 +95,12 @@ spotWebots/
 +-- app/
 |   +-- config.py
 |   +-- gui.py
-|   `-- launcher.py
+|   +-- launcher.py
+|   +-- model_inspector.py
+|   `-- run_manager.py
 |
 +-- controllers/
 |   +-- debugging/
-|   |   `-- debug.py
 |   |
 |   `-- main/
 |       +-- main.py
@@ -83,16 +111,18 @@ spotWebots/
 |       `-- spot_env.py
 |
 +-- training/
+|   +-- check_compatibility.py
+|   +-- test_model.py
 |   +-- train_parallel.py
 |   `-- webots_vec_env.py
 |
 +-- docs/
 |   `-- REPRODUCING.md
 |
-+-- models/                # runtime, ignored by Git
-|
++-- models/                 # runtime, ignored by Git
 +-- logs/
-|   `-- tensorboard/       # runtime, ignored by Git
+|   `-- tensorboard/        # runtime, ignored by Git
++-- runs/                   # runtime, ignored by Git
 |
 +-- worlds/
 |   +-- static_spot_ppo.wbt
@@ -102,65 +132,19 @@ spotWebots/
 `-- README.md
 ```
 
-### `controllers/main`
-
-Contains the robot environment and code that directly interacts with Webots:
-
-- motor control;
-- sensors;
-- reward;
-- Gymnasium environment;
-- external parallel worker.
-
-### `training`
-
-Contains the Stable-Baselines3 training infrastructure and the custom `WebotsVecEnv` used to communicate with multiple Webots instances.
-
-### `app`
-
-Contains the PySide6 **Spot Training Manager**.
-
-The manager currently supports:
-
-- Webots installation selection;
-- world selection;
-- Python environment selection;
-- controller directory selection;
-- configurable number of Webots instances;
-- configurable base port;
-- PPO timesteps;
-- learning rate;
-- `n_steps`;
-- rollout-size display;
-- Webots launch/stop;
-- PPO launch;
-- live trainer output;
-- graceful training stop.
-
-### Runtime directories
-
-`models/` and `logs/` are intentionally ignored by Git because they contain generated artifacts.
-
-The Spot Training Manager creates the required runtime directories automatically before training.
-
 ## Installation
 
-Clone the current parallel-training branch:
+Clone the current development branch:
 
 ```powershell
-git clone --branch parallel-webots https://github.com/Energetic0oak32/spotWebots.git
+git clone --branch webots-rl-interface https://github.com/Energetic0oak32/spotWebots.git
 cd spotWebots
 ```
 
-Create a Python virtual environment:
+Create and activate a Python virtual environment:
 
 ```powershell
 python -m venv env
-```
-
-Activate it:
-
-```powershell
 .\env\Scripts\Activate.ps1
 ```
 
@@ -172,54 +156,229 @@ python -m pip install -r requirements.txt
 
 Webots must be installed separately.
 
-The Webots Python `controller` module is provided by Webots itself and should **not** be installed from PyPI.
+The Webots Python `controller` module is provided by Webots itself and should not be installed from PyPI.
 
-## Spot Training Manager
+## Running the interface
 
-Start the manager from the repository root:
+Start the GUI from the repository root:
 
 ```powershell
 python .\app\gui.py
 ```
 
-A typical workflow is:
+Typical workflow:
 
 ```text
-1. Verify configuration
-2. Start Webots
-3. Start training
-4. Stop training when desired
-5. Stop Webots when finished
+1. Select robot and algorithm
+2. Select the input model, or choose a new model path
+3. Select the output model path
+4. Configure Webots, world, environment and controller paths
+5. Choose instance count and base port
+6. Configure PPO hyperparameters
+7. Choose a fixed or randomized seed
+8. Verify configuration
+9. Start Webots
+10. Verify model/environment compatibility
+11. Start training or deterministic testing
+12. Stop the operation gracefully when desired
+13. Inspect the generated run directory
 ```
 
-The launcher starts Webots in `fast` mode.
+## Models
 
-Stopping training through the manager is graceful: the trainer receives a stop signal, exits `model.learn()`, saves the model, closes the external workers, and leaves the Webots instances open.
+Training distinguishes between the model used as input and the model written at the end.
+
+If the input model exists, it is loaded and training continues from its current state. If it does not exist, a new PPO model is created.
+
+The final model is saved to the configured output path, allowing the original baseline to be preserved.
+
+Example:
+
+```text
+Input:
+models/ppo_spot.zip
+
+Output:
+models/ppo_spot_experiment.zip
+```
+
+## Deterministic testing
+
+The GUI can launch deterministic evaluation with:
+
+```text
+deterministic=True
+```
+
+The number of episodes and seed are configurable.
+
+Testing runs in real-time simulation mode for visual inspection.
+
+## Seeds
+
+The interface supports:
+
+- **fixed seed:** the configured value is reused
+- **random seed:** a concrete seed is generated when the operation begins
+
+Even in random mode, the concrete generated seed is stored in run metadata so the experiment can be reproduced later.
+
+## Experiment runs
+
+Training and testing create a dedicated directory under:
+
+```text
+runs/
+```
+
+Example:
+
+```text
+runs/
+`-- 2026-09-07_04-01-55_spot_ppo_training/
+    +-- config.json
+    +-- run.json
+    `-- training.log
+```
+
+A testing run uses `test.log` instead.
+
+`run.json` stores metadata including:
+
+- run ID
+- operation type
+- status
+- start and finish timestamps
+- robot
+- algorithm
+- concrete seed
+- random-seed flag
+- ports
+- number of instances
+- input model path
+- output model path
+- whether model files existed at startup
+- world path
+- Git branch
+- Git commit
+- requested timesteps or test parameters
+- exit code
+- user-stop flag
+- transport failure
+- Webots-closed flag
+
+Typical final statuses are:
+
+```text
+completed
+stopped
+failed
+```
+
+TensorBoard data is written under:
+
+```text
+logs/tensorboard/
+```
+
+## Graceful stop and failure handling
+
+Stopping training through the GUI is graceful: the trainer receives a stop request, exits `model.learn()`, saves the output model, closes the external workers, and finishes the run as `stopped`.
+
+If a Webots instance is closed during parallel training, the worker disconnect is detected, the remaining session is released, and the run is recorded as failed.
+
+Example:
+
+```json
+{
+  "status": "failed",
+  "stopped_by_user": false,
+  "transport_failure": "WORKER_DISCONNECTED",
+  "webots_closed": true
+}
+```
+
+## Validated MVP scenarios
+
+The Spot/PPO MVP has been manually tested with:
+
+- existing PPO model loading
+- new PPO model creation
+- continued training
+- changed PPO hyperparameters
+- one Webots instance
+- two parallel Webots instances
+- fixed seed
+- random seed
+- deterministic evaluation
+- model/environment compatibility checking
+- separate input/output model files
+- experiment run creation
+- graceful training stop
+- worker disconnect during training
+- incompatible model handling
+- invalid PPO configuration handling
+- operations blocked while Webots is not running
+- GUI resizing and scrolling
+
+## Known limitations
+
+### Spot + PPO only
+
+The GUI currently exposes only the Spot environment and PPO. The next major development stage is to generalize robot and algorithm support.
+
+### No automatic checkpoints
+
+Training currently saves the output model when training finishes or is stopped gracefully.
+
+There are no automatic intermediate checkpoints yet. A crash, forced termination, or power loss may therefore lose progress since the previous saved model.
+
+Automatic checkpoints are planned as a lower-priority improvement.
+
+### Hyperparameter validation
+
+Basic configuration is checked before launch, but not every invalid Stable-Baselines3 hyperparameter combination is rejected directly by the GUI.
+
+Some invalid combinations are rejected by Stable-Baselines3 when the trainer starts. These failures are logged and the run is marked as failed.
+
+### Compatibility and testing
+
+The compatibility checker detects incompatible model/environment spaces.
+
+The backend also validates compatibility when loading a model for testing or training, providing a second failure boundary.
+
+## Next development stage
+
+With the Spot/PPO MVP complete, the next major goal is to generalize the interface.
+
+Planned direction:
+
+1. separate robot-specific environment definitions from the generic training interface
+2. add a second robot/environment
+3. add a second algorithm
+4. validate algorithm/action-space compatibility
+5. use that second combination to remove remaining Spot/PPO assumptions from the application
+
+The intended next validation target is a mobile robot such as the Pioneer with a discrete action space and DQN.
+
+Additional future improvements include:
+
+- automatic checkpoints
+- richer run comparison tools
+- integrated TensorBoard controls
+- more evaluation metrics
+- additional locomotion and recovery tasks
 
 ## Reproducing experiments
 
-Detailed setup, experiment parameters, troubleshooting, and reproducibility guidance are available in:
+Detailed setup and reproducibility guidance are available in:
 
-[docs/REPRODUCING.md](docs/REPRODUCING.md)
+```text
+docs/REPRODUCING.md
+```
 
-## Development status
+## About
 
-The project is under active development.
+This repository started as a reinforcement-learning project for training a Spot-like quadruped in Webots with PPO.
 
-Current work focuses on:
-
-- reliable parallel PPO training;
-- quadruped locomotion;
-- reward design;
-- action smoothness;
-- reproducible experiments;
-- training and simulation management.
-
-Planned improvements include:
-
-- automatic checkpoints;
-- experiment metadata;
-- model selection and compatibility checks;
-- integrated TensorBoard controls;
-- automated evaluation;
-- additional locomotion and recovery tasks.
+The `webots-rl-interface` branch expands that work into an experiment interface intended to support multiple Webots robots and reinforcement-learning algorithms while keeping training, testing, configuration, and experiment tracking in one workflow.
