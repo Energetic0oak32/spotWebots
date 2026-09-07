@@ -4,7 +4,9 @@ from pathlib import Path
 
 import numpy as np
 
-from stable_baselines3 import PPO
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from rl_interface.algorithms import ALGORITHMS, load_model
+from rl_interface.cli import add_environment_args, environment_kwargs
 
 from webots_vec_env import WebotsVecEnv
 
@@ -58,6 +60,7 @@ def parse_args():
     parser.add_argument("--simulation-mode", choices=("realtime", "fast"), default="realtime")
     parser.add_argument("--stop-file", type=Path, default=None)
 
+    add_environment_args(parser)
     return parser.parse_args()
 
 
@@ -90,7 +93,7 @@ def main():
         )
         return 1
 
-    if args.algorithm.lower() != "ppo":
+    if args.algorithm.lower() not in ALGORITHMS:
         print(
             f"ERROR|Algoritmo "
             f"'{args.algorithm}' "
@@ -119,15 +122,16 @@ def main():
 
         env = WebotsVecEnv(
             webots_ports=ports,
-            simulation_mode=args.simulation_mode
+            simulation_mode=args.simulation_mode,
+            **environment_kwargs(args)
         )
 
         print(
             "INFO|Carregando modelo..."
         )
 
-        model = PPO.load(
-            str(model_path),
+        model = load_model(
+            args.algorithm, str(model_path),
             env=env,
             device="cpu",
         )
@@ -227,25 +231,12 @@ def main():
                         f"STEP|"
                         f"episode={episode + 1}|"
                         f"step={step_count}|"
-                        f"reward={reward:.3f}|"
-                        f"forward="
-                        f"{info.get('forward', 0.0):.3f}|"
-                        f"lateral="
-                        f"{info.get('lateral', 0.0):.3f}|"
-                        f"upright="
-                        f"{info.get('upright', 0.0):.3f}|"
-                        f"height="
-                        f"{info.get('body_height', 0.0):.3f}"
+                        f"reward={reward:.3f}"
                     )
 
                 if done:
 
-                    fallen = bool(
-                        info.get(
-                            "fallen",
-                            False,
-                        )
-                    )
+                    truncated = bool(info.get("TimeLimit.truncated", False))
 
                     print(
                         f"EPISODE_END|"
@@ -254,7 +245,7 @@ def main():
                         f"steps={step_count}|"
                         f"reward="
                         f"{total_reward:.3f}|"
-                        f"fallen={fallen}"
+                        f"truncated={truncated}"
                     )
 
                     episode_rewards.append(

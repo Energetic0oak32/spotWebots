@@ -12,6 +12,12 @@ from stable_baselines3.common.vec_env import VecEnv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def stack_observations(observations):
+    if isinstance(observations[0], dict):
+        return {key: np.stack([obs[key] for obs in observations]) for key in observations[0]}
+    return np.stack(observations)
+
+
 class WorkerFailure(RuntimeError):
     """An actionable transport error, including the affected Webots port."""
 
@@ -97,7 +103,9 @@ class _Channel:
 class WebotsVecEnv(VecEnv):
     def __init__(self, webots_ports, controller_exe=None, worker_script=None,
                  authkey="spot-parallel", simulation_mode=None,
-                 startup_timeout=120.0, response_timeout=30.0, close_timeout=3.0):
+                 startup_timeout=120.0, response_timeout=30.0, close_timeout=3.0,
+                 env_path=None, env_class="spot_env:SpotEnv"):
+        env_path = Path(env_path or PROJECT_ROOT / "controllers/main").resolve()
         self.webots_ports = list(webots_ports)
         if not self.webots_ports or len(set(self.webots_ports)) != len(self.webots_ports):
             raise ValueError("Informe portas distintas para pelo menos uma instância.")
@@ -116,7 +124,7 @@ class WebotsVecEnv(VecEnv):
         self.failed = False
         home = Path(os.environ.get("WEBOTS_HOME", r"C:\Program Files\Webots"))
         controller_exe = Path(controller_exe or home / "msys64/mingw64/bin/webots-controller.exe")
-        worker_script = Path(worker_script or PROJECT_ROOT / "controllers/main/parallel_worker.py")
+        worker_script = Path(worker_script or PROJECT_ROOT / "training/webots_worker.py")
         for path in (controller_exe, worker_script):
             if not path.is_file():
                 raise FileNotFoundError(f"Arquivo não encontrado: {path}")
@@ -125,7 +133,8 @@ class WebotsVecEnv(VecEnv):
                 channel = _Channel(authkey.encode("utf-8"))
                 self.channels.append(channel)
                 command = [str(controller_exe), f"--port={port}", str(worker_script),
-                           f"--trainer-port={channel.port}", f"--authkey={authkey}"]
+                           f"--trainer-port={channel.port}", f"--authkey={authkey}",
+                           f"--env-path={env_path}", f"--env-class={env_class}"]
                 if simulation_mode is not None:
                     command.append(f"--simulation-mode={simulation_mode}")
                 self.processes.append(subprocess.Popen(command, cwd=str(worker_script.parent)))
@@ -180,14 +189,14 @@ class WebotsVecEnv(VecEnv):
             self.reset_infos[index] = info
         self._reset_seeds()
         self._reset_options()
-        return np.stack(observations)
+        return stack_observations(observations)
 
     def step_async(self, actions):
         if self.waiting:
             raise RuntimeError("Já existe um step pendente.")
         if len(actions) != self.num_envs:
             raise ValueError("Quantidade de ações diferente da quantidade de ambientes.")
-        self.pending = [(i, channel.submit("step", np.asarray(action, dtype=np.float32)))
+        self.pending = [(i, channel.submit("step", action))
                         for i, (channel, action) in enumerate(zip(self.channels, actions))]
         self.waiting = True
 
@@ -206,7 +215,7 @@ class WebotsVecEnv(VecEnv):
                 rewards.append(reward)
                 dones.append(done)
                 infos.append(info)
-            return (np.stack(observations), np.asarray(rewards, dtype=np.float32),
+            return (stack_observations(observations), np.asarray(rewards, dtype=np.float32),
                     np.asarray(dones, dtype=bool), infos)
         finally:
             self.waiting = False

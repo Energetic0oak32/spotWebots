@@ -1,4 +1,8 @@
 import json
+import re
+import os
+import tempfile
+from uuid import uuid4
 import subprocess
 
 from copy import deepcopy
@@ -45,11 +49,12 @@ class RunSession:
 
         now = datetime.now().astimezone()
 
+        robot_slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(config["robot"])).strip("_") or "robot"
         run_id = (
-            f"{now.strftime('%Y-%m-%d_%H-%M-%S')}_"
-            f"{config['robot']}_"
+            f"{now.strftime('%Y-%m-%d_%H-%M-%S-%f')}_"
+            f"{robot_slug}_"
             f"{config['algorithm']}_"
-            f"{operation}"
+            f"{operation}_{uuid4().hex}"
         )
 
         RUNS_PATH.mkdir(
@@ -173,6 +178,9 @@ class RunSession:
             "output_model_existed_at_start":
                 output_model_path.is_file(),
 
+            "env_class": config.get("env_class", "spot_env:SpotEnv"),
+            "env_path": config["controller_path"],
+
             "world_path":
                 config["world_path"],
 
@@ -227,24 +235,27 @@ class RunSession:
         # Cria o log imediatamente.
         self.log_path.touch()
 
-    def _write_json(
-        self,
-        path,
-        data,
-    ):
-
-        with open(
-            path,
-            "w",
-            encoding="utf-8",
-        ) as file:
-
-            json.dump(
-                data,
-                file,
-                indent=4,
-                ensure_ascii=False,
-            )
+    def _write_json(self, path, data):
+        # Replace only after a complete, flushed write in the same directory.
+        # If serialization/write/replace fails, the previous JSON stays intact.
+        path = Path(path)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=path.parent,
+                prefix=f".{path.name}.", suffix=".tmp", delete=False,
+            ) as file:
+                temporary_path = Path(file.name)
+                json.dump(data, file, indent=4, ensure_ascii=False)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary_path, path)
+        finally:
+            if temporary_path is not None:
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def append(
         self,
