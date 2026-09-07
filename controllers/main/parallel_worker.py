@@ -19,6 +19,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--trainer-port", type=int, required=True)
     parser.add_argument("--authkey", type=str, required=True)
+    parser.add_argument("--simulation-mode", choices=("realtime", "fast"), default=None)
     args = parser.parse_args()
 
     connection = Client(
@@ -26,8 +27,30 @@ def main():
         authkey=args.authkey.encode("utf-8"),
     )
 
+    env = None
+    previous_mode = None
+
+    def restore_mode():
+        nonlocal previous_mode
+        if previous_mode is not None:
+            env.unwrapped.robot.simulationSetMode(previous_mode)
+            env.unwrapped.robot.step(0)
+            previous_mode = None
+
     try:
         env = Monitor(SpotEnv())
+        robot = env.unwrapped.robot
+        requested_mode = None
+        if args.simulation_mode is not None:
+            previous_mode = robot.simulationGetMode()
+            requested_mode = (
+                robot.SIMULATION_MODE_REAL_TIME
+                if args.simulation_mode == "realtime"
+                else robot.SIMULATION_MODE_FAST
+            )
+            robot.simulationSetMode(requested_mode)
+            robot.step(0)
+
 
         connection.send(
             (
@@ -48,6 +71,10 @@ def main():
                 else:
                     obs, info = env.reset(seed=seed, options=options)
 
+                # Reapply after reset in case the world reset changes its mode.
+                if requested_mode is not None:
+                    robot.simulationSetMode(requested_mode)
+                    robot.step(0)
                 connection.send((obs, info))
 
             elif command == "step":
@@ -68,7 +95,9 @@ def main():
                 connection.send(method(*method_args, **method_kwargs))
 
             elif command == "close":
+                restore_mode()
                 env.close()
+                env = None
                 connection.send(None)
                 break
 
@@ -83,7 +112,14 @@ def main():
         raise
 
     finally:
-        connection.close()
+        try:
+            if env is not None:
+                try:
+                    restore_mode()
+                finally:
+                    env.close()
+        finally:
+            connection.close()
 
 
 if __name__ == "__main__":

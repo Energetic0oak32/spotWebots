@@ -29,6 +29,6 @@ RectangleArena {
 }
 Spot {
   rotation 0 0 1 -1.5707953071795862
-  controller "test_deterministic"
+  controller "<extern>"
   supervisor TRUE
 }

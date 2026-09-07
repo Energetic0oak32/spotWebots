@@ -2,7 +2,7 @@ import sys
 import secrets
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, QProcessEnvironment
+from PySide6.QtCore import QProcess, QProcessEnvironment, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -29,6 +29,7 @@ from model_inspector import inspect_model
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TRAINING_PATH = PROJECT_ROOT / "training"
 STOP_FILE = TRAINING_PATH / ".stop_training"
+TEST_STOP_FILE = TRAINING_PATH / ".stop_test"
 
 
 class SpotManager(QMainWindow):
@@ -44,6 +45,12 @@ class SpotManager(QMainWindow):
         self.launcher = None
         self.training_process = None
         self.test_process = None
+        self.operation = None
+        self.stop_requested = False
+        self.close_pending = False
+        self.webots_closed = False
+        self.transport_failure = None
+        self.transport_log_tail = ""
 
 
         # Verificação de compatibilidade
@@ -52,10 +59,185 @@ class SpotManager(QMainWindow):
 
         self._build_ui()
         self.load_values()
+        self.sync_ui_state()
+        self.health_timer = QTimer(self)
+        self.health_timer.setInterval(500)
+        self.health_timer.timeout.connect(self.check_webots_health)
+        self.health_timer.start()
 
     # ------------------------------------------------------------------
     # Runtime helpers
     # ------------------------------------------------------------------
+
+    def sync_ui_state(self):
+        if not hasattr(self, "start_test_button"):
+            return
+        idle = self.operation is None
+        running = self.launcher is not None
+        self.config_panel.setEnabled(idle)
+        for widget in (self.webots_input, self.world_input, self.venv_input,
+                       self.controller_input, self.instances_input, self.port_input):
+            widget.setEnabled(idle and not running)
+        for button in self.transport_buttons:
+            button.setEnabled(idle and not running)
+        self.start_webots_button.setEnabled(idle and not running)
+        self.stop_webots_button.setEnabled(idle and running)
+        self.compatibility_button.setEnabled(idle and running)
+        self.start_training_button.setEnabled(idle and running and self.model_compatible is True)
+        self.stop_training_button.setEnabled(self.operation == "training" and not self.stop_requested)
+        model_path = Path(self.model_input.text().strip())
+        if model_path.suffix.lower() != ".zip":
+            model_path = Path(str(model_path) + ".zip")
+        self.start_test_button.setEnabled(idle and running and model_path.is_file())
+        self.stop_test_button.setEnabled(self.operation == "testing" and not self.stop_requested)
+
+    def finish_operation(self):
+        operation = self.operation
+        if self.webots_closed or self.transport_failure:
+            if self.launcher is not None:
+                self.launcher.stop_all()
+                self.launcher = None
+            self.model_compatible = None
+            label = {"testing": "Teste", "training": "Treinamento", "checking": "Verificação"}.get(operation, "Operação")
+            if self.webots_closed:
+                reason = "uma instância do Webots foi fechada"
+            elif self.transport_failure == "WORKER_TIMEOUT":
+                reason = "uma instância não respondeu no prazo"
+            else:
+                reason = "a conexão com um worker foi encerrada ou falhou"
+            self.status_label.setText(f"{label} interrompido: {reason}. Inicie o Webots novamente.")
+            self.log_output.append("Sessão encerrada; instâncias restantes foram liberadas.")
+        self.operation = None
+        self.stop_requested = False
+        self.sync_ui_state()
+        if self.close_pending:
+            self.close_pending = False
+            QTimer.singleShot(0, self.close)
+
+    def prepare_operation(self):
+        self.webots_closed = False
+        self.transport_failure = None
+        self.transport_log_tail = ""
+
+    def record_process_output(self, text):
+        # QProcess can split a protocol tag across output chunks.
+        combined = self.transport_log_tail + text
+        for tag in ("WORKER_DISCONNECTED", "WORKER_TIMEOUT", "WORKER_ERROR", "WORKER_PROTOCOL"):
+            if tag + "|" in combined:
+                self.transport_failure = tag
+        self.transport_log_tail = combined[-256:]
+
+    def check_webots_health(self):
+        if self.launcher is None:
+            return
+        exited = [p for p in self.launcher.processes if p.poll() is not None]
+        if not exited:
+            return
+        self.webots_closed = True
+        if self.operation is None:
+            self.launcher.stop_all()
+            self.launcher = None
+            self.model_compatible = None
+            self.status_label.setText("Webots fechado. Inicie as instâncias novamente.")
+            self.sync_ui_state()
+        else:
+            self.status_label.setText("Webots fechado. Aguardando a liberação dos controllers...")
+
+    def process_error(self, attribute, error):
+        process = getattr(self, attribute)
+        detail = process.errorString() if process is not None else str(error)
+        self.log_output.append(f"Erro: {detail}")
+        self.status_label.setText(f"Falha no processo: {detail}")
+        # FailedToStart does not produce a finished signal.
+        if error == QProcess.FailedToStart:
+            setattr(self, attribute, None)
+            self.finish_operation()
+
+    def start_test(self):
+        self.check_webots_health()
+        if self.operation is not None or self.launcher is None:
+            return
+        config = self.get_config()
+        model_path = Path(config["model_path"].strip())
+        if model_path.suffix.lower() != ".zip":
+            model_path = Path(str(model_path) + ".zip")
+        if not model_path.is_file():
+            self.status_label.setText("Selecione um modelo salvo para testar.")
+            return
+        try:
+            TEST_STOP_FILE.unlink(missing_ok=True)
+        except OSError as error:
+            self.status_label.setText(f"Não foi possível preparar o teste: {error}")
+            return
+        seed = self.resolve_seed(config)
+        save_config(config)
+        # Test uses the first existing instance; no new Webots is launched.
+        port = self.launcher.get_ports()[0]
+        process = QProcess(self)
+        self.test_process = process
+        process.setProgram(str(Path(config["venv_path"]) / "Scripts" / "python.exe"))
+        process.setArguments([
+            "-u", str(TRAINING_PATH / "test_model.py"),
+            "--ports", str(port), "--model-path", str(model_path),
+            "--algorithm", config["algorithm"], "--seed", str(seed),
+            "--episodes", str(config["test_episodes"]),
+            "--stop-file", str(TEST_STOP_FILE),
+            "--simulation-mode", "realtime",
+        ])
+        process.setWorkingDirectory(str(PROJECT_ROOT))
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("WEBOTS_HOME", config["webots_home"])
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUTF8", "1")
+        process.setProcessEnvironment(environment)
+        process.setProcessChannelMode(QProcess.MergedChannels)
+        process.readyReadStandardOutput.connect(self.read_test_output)
+        process.finished.connect(self.test_finished)
+        process.errorOccurred.connect(lambda error: self.process_error("test_process", error))
+        self.log_output.clear()
+        self.log_output.append(f"Testando na porta {port}, seed {seed}, {config['test_episodes']} episódios. Tempo real.\n")
+        self.prepare_operation()
+        self.operation = "testing"
+        self.stop_requested = False
+        self.sync_ui_state()
+        self.status_label.setText("Teste em execução.")
+        process.start()
+
+    def read_test_output(self):
+        if self.test_process is not None:
+            data = self.test_process.readAllStandardOutput()
+            text = bytes(data).decode("utf-8", errors="replace")
+            self.record_process_output(text)
+            self.log_output.insertPlainText(text)
+            scrollbar = self.log_output.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+
+    def stop_test(self):
+        if self.operation != "testing" or self.stop_requested:
+            return
+        try:
+            TEST_STOP_FILE.touch()
+        except OSError as error:
+            self.status_label.setText(f"Erro ao solicitar parada: {error}")
+            return
+        self.stop_requested = True
+        self.status_label.setText("Aguardando o teste encerrar e liberar o ambiente...")
+        self.sync_ui_state()
+
+    def test_finished(self, exit_code, exit_status):
+        self.read_test_output()
+        stopped = self.stop_requested
+        self.test_process = None
+        try:
+            TEST_STOP_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if exit_code == 0 and exit_status == QProcess.NormalExit:
+            message = "Teste interrompido." if stopped else "Teste concluído. Resultados no log."
+        else:
+            message = f"Teste falhou (código {exit_code}). Consulte o log."
+        self.status_label.setText(message)
+        self.finish_operation()
 
     def ensure_runtime_directories(self):
         """
@@ -105,6 +287,9 @@ class SpotManager(QMainWindow):
     # ------------------------------------------------------------------
 
     def start_training(self):
+        self.check_webots_health()
+        if self.operation is not None:
+            return
         if self.launcher is None:
             self.status_label.setText(
                 "Inicie as instâncias do Webots primeiro."
@@ -221,6 +406,8 @@ class SpotManager(QMainWindow):
             config["webots_home"],
         )
 
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUTF8", "1")
         self.training_process.setProcessEnvironment(environment)
         self.training_process.setProcessChannelMode(
             QProcess.MergedChannels
@@ -305,27 +492,16 @@ class SpotManager(QMainWindow):
             f"{rollout}\n"
         )
 
+        self.prepare_operation()
+        self.operation = "training"
+        self.stop_requested = False
+        self.sync_ui_state()
         self.training_process.start()
 
-        self.start_webots_button.setEnabled(
-            False
-        )
 
-        self.stop_webots_button.setEnabled(
-            False
-        )
 
-        self.start_training_button.setEnabled(
-            False
-        )
 
-        self.stop_training_button.setEnabled(
-            True
-        )
 
-        self.compatibility_button.setEnabled(
-            False
-        )
 
         self.status_label.setText(
             "Treinamento em execução."
@@ -359,38 +535,22 @@ class SpotManager(QMainWindow):
             "Solicitando parada do treinamento..."
         )
 
-        # Evita pedidos repetidos enquanto o trainer encerra.
-        self.stop_training_button.setEnabled(False)
+        self.stop_requested = True
+        self.sync_ui_state()
 
     def training_finished(self, exit_code, exit_status):
+        self.read_training_output()
         self.clear_stop_file()
-
-        if exit_code == 0:
-            self.status_label.setText(
-                "Treinamento finalizado corretamente."
-            )
-        else:
-            self.status_label.setText(
-                f"Treinamento finalizado com código {exit_code}."
-            )
-
-        self.start_training_button.setEnabled(
-            self.launcher is not None
-        )
-        self.stop_training_button.setEnabled(False)
-        self.start_webots_button.setEnabled(
-            self.launcher is None
-        )
-        self.stop_webots_button.setEnabled(
-            self.launcher is not None
-        )
-
         self.training_process = None
+        self.status_label.setText(
+            "Treinamento finalizado e modelo salvo."
+            if exit_code == 0 and exit_status == QProcess.NormalExit
+            else f"Treinamento falhou (código {exit_code}). Consulte o log."
+        )
+        self.finish_operation()
 
     def training_error(self, error):
-        self.status_label.setText(
-            f"Erro no processo de treinamento: {error}"
-        )
+        self.process_error("training_process", error)
 
     def read_training_output(self):
         if self.training_process is None:
@@ -403,6 +563,7 @@ class SpotManager(QMainWindow):
             errors="replace",
         )
 
+        self.record_process_output(text)
         self.log_output.insertPlainText(text)
 
         scrollbar = self.log_output.verticalScrollBar()
@@ -413,6 +574,9 @@ class SpotManager(QMainWindow):
     # ------------------------------------------------------------------
 
     def check_compatibility(self):
+        self.check_webots_health()
+        if self.operation is not None:
+            return
 
         if self.launcher is None:
             self.status_label.setText(
@@ -499,6 +663,8 @@ class SpotManager(QMainWindow):
             config["webots_home"],
         )
 
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("PYTHONUTF8", "1")
         self.compatibility_process.setProcessEnvironment(
             environment
         )
@@ -518,8 +684,6 @@ class SpotManager(QMainWindow):
         self.model_compatible = None
         self.compatibility_output = ""
 
-        self.compatibility_button.setEnabled(False)
-        self.start_training_button.setEnabled(False)
 
         self.log_output.append(
             "\n=== VERIFICANDO COMPATIBILIDADE ===\n"
@@ -529,6 +693,12 @@ class SpotManager(QMainWindow):
             "Verificando compatibilidade..."
         )
 
+        self.compatibility_process.errorOccurred.connect(
+            lambda error: self.process_error("compatibility_process", error)
+        )
+        self.prepare_operation()
+        self.operation = "checking"
+        self.sync_ui_state()
         self.compatibility_process.start()
 
     def read_compatibility_output(self):
@@ -546,6 +716,7 @@ class SpotManager(QMainWindow):
             errors="replace",
         )
 
+        self.record_process_output(text)
         self.compatibility_output += text
 
         self.log_output.insertPlainText(
@@ -560,87 +731,29 @@ class SpotManager(QMainWindow):
             scrollbar.maximum()
         )
 
-    def compatibility_finished(
-        self,
-        exit_code,
-        exit_status,
-    ):
-
-        output = self.compatibility_output
-
-        if "INCOMPATIBLE|" in output:
-
-            self.model_compatible = False
-
-            self.status_label.setText(
-                "✗ Modelo incompatível com o ambiente."
-            )
-
-            self.start_training_button.setEnabled(
-                False
-            )
-
-        elif "COMPATIBLE|" in output:
-
-            self.model_compatible = True
-
-            self.status_label.setText(
-                "✓ Modelo compatível com o ambiente."
-            )
-
-            self.start_training_button.setEnabled(
-                True
-            )
-
-        elif "NEW|" in output:
-
-            self.model_compatible = True
-
-            self.status_label.setText(
-                "✓ Modelo novo. Pronto para treinar."
-            )
-
-            self.start_training_button.setEnabled(
-                True
-            )
-
-        else:
-
-            self.model_compatible = None
-
-            self.status_label.setText(
-                "Não foi possível verificar "
-                "a compatibilidade."
-            )
-
-            self.start_training_button.setEnabled(
-                False
-            )
-
-        self.compatibility_button.setEnabled(
-            self.launcher is not None
+    def compatibility_finished(self, exit_code, exit_status):
+        self.read_compatibility_output()
+        tags = {line.split("|", 1)[0] for line in self.compatibility_output.splitlines()}
+        ok = exit_code == 0 and exit_status == QProcess.NormalExit
+        self.model_compatible = bool(ok and tags.intersection({"COMPATIBLE", "NEW"}))
+        self.status_label.setText(
+            "Modelo pronto para treinamento." if self.model_compatible
+            else "Verificação falhou. Consulte o log."
         )
-
         self.compatibility_process = None
+        self.finish_operation()
 
     def invalidate_compatibility(self):
-
         self.model_compatible = None
-
-        if self.launcher is not None:
-            self.start_training_button.setEnabled(
-                False
-            )
-
-            self.compatibility_button.setEnabled(
-                True
-            )
+        self.sync_ui_state()
 
     # ------------------------------------------------------------------
     # Webots
     # ------------------------------------------------------------------
 
     def start_webots(self):
+        if self.operation is not None:
+            return
         if not self.preflight_check():
             return
 
@@ -668,11 +781,7 @@ class SpotManager(QMainWindow):
                 f"✓ Webots iniciados nas portas: {ports_text}"
             )
 
-            self.start_webots_button.setEnabled(False)
-            self.stop_webots_button.setEnabled(True)
-            self.start_training_button.setEnabled(False)
 
-            self.compatibility_button.setEnabled(True)
 
         except Exception as error:
             if self.launcher is not None:
@@ -683,8 +792,11 @@ class SpotManager(QMainWindow):
             self.status_label.setText(
                 f"✗ Erro ao iniciar Webots:\n{error}"
             )
+        self.sync_ui_state()
 
     def stop_webots(self):
+        if self.operation is not None:
+            return
         if (
             self.training_process is not None
             and self.training_process.state() != QProcess.NotRunning
@@ -707,13 +819,9 @@ class SpotManager(QMainWindow):
             "Webots encerrados."
         )
 
-        self.start_webots_button.setEnabled(True)
-        self.stop_webots_button.setEnabled(False)
-        self.start_training_button.setEnabled(False)
-        self.stop_training_button.setEnabled(False)
 
-        self.compatibility_button.setEnabled(False)
         self.model_compatible = None
+        self.sync_ui_state()
 
     # ------------------------------------------------------------------
     # UI
@@ -836,6 +944,7 @@ class SpotManager(QMainWindow):
         controller_row.addWidget(controller_button)
 
         form.addRow("Controller:", controller_row)
+        self.transport_buttons = [webots_button, world_button, venv_button, controller_button]
 
         # Instances
         self.instances_input = QSpinBox()
@@ -927,6 +1036,10 @@ class SpotManager(QMainWindow):
             self.gamma_input,
         )
 
+        self.test_episodes_input = QSpinBox()
+        self.test_episodes_input.setRange(1, 10000)
+        form.addRow("Episódios de teste:", self.test_episodes_input)
+
         # Seed
         self.seed_input = QSpinBox()
         self.seed_input.setRange(
@@ -951,7 +1064,9 @@ class SpotManager(QMainWindow):
             seed_row,
         )
 
-        main_layout.addLayout(form)
+        self.config_panel = QWidget()
+        self.config_panel.setLayout(form)
+        main_layout.addWidget(self.config_panel)
 
         self.rollout_label = QLabel()
         main_layout.addWidget(self.rollout_label)
@@ -1050,6 +1165,15 @@ class SpotManager(QMainWindow):
 
         main_layout.addLayout(training_buttons)
 
+        test_buttons = QHBoxLayout()
+        self.start_test_button = QPushButton("▶ Testar modelo")
+        self.stop_test_button = QPushButton("■ Parar teste")
+        self.start_test_button.clicked.connect(self.start_test)
+        self.stop_test_button.clicked.connect(self.stop_test)
+        test_buttons.addWidget(self.start_test_button)
+        test_buttons.addWidget(self.stop_test_button)
+        main_layout.addLayout(test_buttons)
+
         # Log
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
@@ -1066,6 +1190,7 @@ class SpotManager(QMainWindow):
     # ------------------------------------------------------------------
 
     def load_values(self):
+        self.test_episodes_input.setValue(self.config.get("test_episodes", 3))
 
         self.webots_input.setText(
             self.config["webots_home"]
@@ -1178,6 +1303,8 @@ class SpotManager(QMainWindow):
                 "algorithm_settings"
             ].items()
         }
+
+        config["test_episodes"] = self.test_episodes_input.value()
 
         config["robot"] = (
             self.robot_input.currentData()
@@ -1385,6 +1512,7 @@ class SpotManager(QMainWindow):
             "train_parallel.py",
             "webots_vec_env.py",
             "check_compatibility.py",
+            "test_model.py",
         ]
 
         for filename in training_required_files:
@@ -1564,6 +1692,8 @@ class SpotManager(QMainWindow):
         )
 
     def select_webots(self):
+        if self.launcher is not None or self.operation is not None:
+            return
         path = QFileDialog.getExistingDirectory(
             self,
             "Selecione a pasta do Webots",
@@ -1573,6 +1703,8 @@ class SpotManager(QMainWindow):
             self.webots_input.setText(path)
 
     def select_world(self):
+        if self.launcher is not None or self.operation is not None:
+            return
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Selecione o world",
@@ -1584,6 +1716,8 @@ class SpotManager(QMainWindow):
             self.world_input.setText(path)
 
     def select_venv(self):
+        if self.launcher is not None or self.operation is not None:
+            return
         path = QFileDialog.getExistingDirectory(
             self,
             "Selecione o ambiente Python",
@@ -1593,6 +1727,8 @@ class SpotManager(QMainWindow):
             self.venv_input.setText(path)
 
     def select_controller(self):
+        if self.launcher is not None or self.operation is not None:
+            return
         path = QFileDialog.getExistingDirectory(
             self,
             "Selecione a pasta do controller",
@@ -1606,37 +1742,19 @@ class SpotManager(QMainWindow):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event):
-        """
-        Ao fechar a aplicação inteira, tenta primeiro solicitar parada
-        graciosa do trainer. Se ele não finalizar em alguns segundos,
-        encerra o processo à força. Em seguida fecha as instâncias do
-        Webots abertas pelo manager.
-        """
-        if (
-            self.training_process is not None
-            and self.training_process.state() != QProcess.NotRunning
-        ):
-            try:
-                STOP_FILE.touch()
-            except OSError:
-                pass
-
-            finished = self.training_process.waitForFinished(
-                5000
-            )
-
-            if not finished:
-                self.training_process.kill()
-                self.training_process.waitForFinished(3000)
-
-            self.training_process = None
-
-        self.clear_stop_file()
-
+        if self.operation is not None:
+            self.close_pending = True
+            event.ignore()
+            if self.operation == "training":
+                self.stop_training()
+            elif self.operation == "testing":
+                self.stop_test()
+            else:
+                self.status_label.setText("Aguardando a verificação terminar para fechar.")
+            return
         if self.launcher is not None:
             self.launcher.stop_all()
             self.launcher = None
-
         event.accept()
 
 

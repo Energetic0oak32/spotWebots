@@ -1,4 +1,5 @@
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -74,14 +75,31 @@ class WebotsLauncher:
 
 
     def stop_all(self):
-
         for process in self.processes:
-
             if process.poll() is None:
-
-                process.terminate()
-
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+        deadline = time.monotonic() + 2.0
+        for process in self.processes:
+            try:
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            except OSError:
+                pass
+        deadline = time.monotonic() + 2.0
+        for process in self.processes:
+            try:
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+            except (subprocess.TimeoutExpired, OSError):
+                pass
         self.processes.clear()
+
 
 if __name__ == "__main__":
 

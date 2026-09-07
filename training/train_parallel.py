@@ -1,11 +1,12 @@
 import argparse
 import os
+import sys
 
 from pathlib import Path
 
 from stable_baselines3 import PPO
 
-from webots_vec_env import WebotsVecEnv
+from webots_vec_env import WebotsVecEnv, WorkerFailure
 
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -324,4 +325,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except WorkerFailure as error:
+        print(f"ERROR|{error}", flush=True)
+        sys.exit(2)

@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {
     "world_path": str(
         PROJECT_ROOT
         / "worlds"
-        / "static_spot_ppo.wbt"
+        / "static_spot_parallel.wbt"
     ),
 
     "venv_path": r"G:\UFSC\WeBots\spotWebots\env",

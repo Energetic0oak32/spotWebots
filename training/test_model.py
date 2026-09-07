@@ -55,12 +55,19 @@ def parse_args():
         default=3,
     )
 
+    parser.add_argument("--simulation-mode", choices=("realtime", "fast"), default="realtime")
+    parser.add_argument("--stop-file", type=Path, default=None)
+
     return parser.parse_args()
 
 
 def main():
 
     args = parse_args()
+
+    if args.episodes < 1:
+        print("ERROR|Informe pelo menos um episódio.")
+        return 1
 
     ports = [
         int(port.strip())
@@ -111,7 +118,8 @@ def main():
         )
 
         env = WebotsVecEnv(
-            webots_ports=ports
+            webots_ports=ports,
+            simulation_mode=args.simulation_mode
         )
 
         print(
@@ -147,9 +155,8 @@ def main():
             f"Episódios: {args.episodes}"
         )
 
-        print(
-            "deterministic=True"
-        )
+        print("deterministic=True")
+        print(f"Modo de simulação: {args.simulation_mode}")
 
         print(
             "============================\n"
@@ -184,6 +191,10 @@ def main():
             )
 
             while True:
+
+                if args.stop_file is not None and args.stop_file.exists():
+                    print("STOPPED|Teste interrompido pelo usuário.")
+                    return 0
 
                 action, _ = model.predict(
                     obs,
