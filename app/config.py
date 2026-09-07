@@ -8,6 +8,16 @@ CONFIG_PATH = PROJECT_ROOT / "spot_manager_config.json"
 
 
 DEFAULT_CONFIG = {
+
+    "available_algorithms": [
+        "ppo"
+    ],
+
+    # Projeto
+    "robot": "spot",
+    "algorithm": "ppo",
+
+    # Webots
     "webots_home": r"C:\Program Files\Webots",
 
     "world_path": str(
@@ -16,10 +26,7 @@ DEFAULT_CONFIG = {
         / "static_spot_ppo.wbt"
     ),
 
-    "venv_path": str(
-        PROJECT_ROOT
-        / "env"
-    ),
+    "venv_path": r"G:\UFSC\WeBots\spotWebots\env",
 
     "controller_path": str(
         PROJECT_ROOT
@@ -27,12 +34,45 @@ DEFAULT_CONFIG = {
         / "main"
     ),
 
+    # Paralelismo
     "instances": 2,
     "base_port": 1234,
 
+    # Modelo
+    "model_path": str(
+        PROJECT_ROOT
+        / "models"
+        / "ppo_spot"
+    ),
+
+    # Treinamento geral
     "total_timesteps": 500_000,
-    "learning_rate": 5e-5,
-    "n_steps": 2048
+    "seed": 42,
+    "random_seed": False,
+    "test_episodes": 3,
+
+    # Configurações específicas dos algoritmos
+    "algorithm_settings": {
+
+        "ppo": {
+            "learning_rate": 5e-5,
+            "n_steps": 2048,
+            "batch_size": 64,
+            "n_epochs": 10,
+            "gamma": 0.99,
+        },
+
+        "dqn": {
+            "learning_rate": 1e-4,
+            "buffer_size": 1_000_000,
+            "learning_starts": 50_000,
+            "batch_size": 32,
+            "gamma": 0.99,
+            "train_freq": 4,
+            "gradient_steps": 1,
+            "exploration_fraction": 0.1,
+        },
+    },
 }
 
 
@@ -55,11 +95,9 @@ def load_config():
         json.JSONDecodeError,
         OSError
     ):
-
         return DEFAULT_CONFIG.copy()
 
     config = DEFAULT_CONFIG.copy()
-
     config.update(saved_config)
 
     return config

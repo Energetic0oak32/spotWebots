@@ -84,6 +84,30 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=64
+    )
+
+    parser.add_argument(
+        "--n-epochs",
+        type=int,
+        default=10
+    )
+
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=0.99
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42
+    )
+
+    parser.add_argument(
         "--model-path",
         type=str,
         default=str(DEFAULT_MODEL_PATH)
@@ -95,6 +119,16 @@ def parse_args():
 def main():
 
     args = parse_args()
+
+    model_path = Path(args.model_path)
+
+    if model_path.suffix.lower() == ".zip":
+        model_path = model_path.with_suffix("")
+
+    model_path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
     webots_ports = [
         int(port.strip())
@@ -127,11 +161,40 @@ def main():
         f"{env.num_envs} instâncias.\n"
     )
 
+    print(
+        f"Batch size: {args.batch_size}"
+    )
+
+    print(
+        f"N epochs: {args.n_epochs}"
+    )
+
+    print(
+        f"Gamma: {args.gamma}"
+    )
+
+    print(
+        f"Seed: {args.seed}"
+    )
+
+    print(
+        f"Modelo: {model_path}"
+    )
+
+    print(
+        f"Rollout efetivo: "
+        f"{len(webots_ports)} × "
+        f"{args.n_steps} = "
+        f"{len(webots_ports) * args.n_steps}"
+    )
+
     try:
 
-        if os.path.exists(
-            args.model_path + ".zip"
-        ):
+        model_zip = Path(
+            str(model_path) + ".zip"
+        )
+
+        if model_zip.exists():
 
             print(
                 "Modelo encontrado. "
@@ -139,14 +202,23 @@ def main():
             )
 
             model = PPO.load(
-                args.model_path,
+                str(model_path),
                 env=env,
                 custom_objects={
                     "learning_rate":
                         args.learning_rate,
 
                     "n_steps":
-                        args.n_steps
+                        args.n_steps,
+
+                    "batch_size":
+                        args.batch_size,
+
+                    "n_epochs":
+                        args.n_epochs,
+
+                    "gamma":
+                        args.gamma,
                 }
             )
 
@@ -160,13 +232,73 @@ def main():
             model = PPO(
                 "MlpPolicy",
                 env,
-                learning_rate=args.learning_rate,
-                n_steps=args.n_steps,
+
+                learning_rate=
+                    args.learning_rate,
+
+                n_steps=
+                    args.n_steps,
+
+                batch_size=
+                    args.batch_size,
+
+                n_epochs=
+                    args.n_epochs,
+
+                gamma=
+                    args.gamma,
+
+                seed=
+                    args.seed,
+
                 verbose=1,
+
                 tensorboard_log=str(
                     TENSORBOARD_PATH
                 )
             )
+
+        model.set_random_seed(
+            args.seed
+        )
+
+        print(
+            "\n=== CONFIGURAÇÃO EFETIVA DO MODELO ==="
+        )
+
+        print(
+            f"n_steps efetivo: {model.n_steps}"
+        )
+
+        print(
+            f"batch_size efetivo: {model.batch_size}"
+        )
+
+        print(
+            f"n_epochs efetivo: {model.n_epochs}"
+        )
+
+        print(
+            f"gamma efetivo: {model.gamma}"
+        )
+
+        print(
+            f"n_envs efetivo: {model.n_envs}"
+        )
+
+        print(
+            f"rollout buffer: "
+            f"{model.rollout_buffer.buffer_size}"
+        )
+
+        print(
+            f"learning rate efetivo: "
+            f"{model.lr_schedule(1.0)}"
+        )
+
+        print(
+            "======================================\n"
+        )
 
         stop_callback = StopTrainingCallback(
             STOP_FILE
@@ -179,7 +311,7 @@ def main():
         )
 
         model.save(
-            args.model_path
+            str(model_path)
         )
 
         print(

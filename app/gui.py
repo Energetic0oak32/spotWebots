@@ -1,4 +1,5 @@
 import sys
+import secrets
 from pathlib import Path
 
 from PySide6.QtCore import QProcess, QProcessEnvironment
@@ -16,10 +17,13 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QComboBox,
+    QCheckBox,
 )
 
 from config import load_config, save_config
 from launcher import WebotsLauncher
+from model_inspector import inspect_model
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -32,13 +36,19 @@ class SpotManager(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("Spot Training Manager")
+        self.setWindowTitle("Webots RL Trainer")
         self.resize(750, 650)
 
         self.config = load_config()
 
         self.launcher = None
         self.training_process = None
+        self.test_process = None
+
+
+        # Verificação de compatibilidade
+        self.compatibility_process = None
+        self.model_compatible = None
 
         self._build_ui()
         self.load_values()
@@ -69,6 +79,27 @@ class SpotManager(QMainWindow):
             except OSError:
                 pass
 
+    def resolve_seed(self, config):
+
+        if config.get(
+            "random_seed",
+            False,
+        ):
+
+            seed = secrets.randbelow(
+                2_147_483_648
+            )
+
+            config["seed"] = seed
+
+            self.seed_input.setValue(
+                seed
+            )
+
+            return seed
+
+        return config["seed"]
+
     # ------------------------------------------------------------------
     # Training
     # ------------------------------------------------------------------
@@ -77,6 +108,12 @@ class SpotManager(QMainWindow):
         if self.launcher is None:
             self.status_label.setText(
                 "Inicie as instâncias do Webots primeiro."
+            )
+            return
+
+        if self.model_compatible is not True:
+            self.status_label.setText(
+                "Verifique a compatibilidade antes de iniciar o treinamento."
             )
             return
 
@@ -90,6 +127,11 @@ class SpotManager(QMainWindow):
             return
 
         config = self.get_config()
+
+        seed = self.resolve_seed(
+            config
+        )
+
         save_config(config)
 
         self.ensure_runtime_directories()
@@ -109,17 +151,63 @@ class SpotManager(QMainWindow):
         ports = self.launcher.get_ports()
         ports_text = ",".join(str(port) for port in ports)
 
+        algorithm = config["algorithm"]
+
+        if algorithm != "ppo":
+            self.status_label.setText(
+                f"Algoritmo '{algorithm}' "
+                "ainda não implementado."
+            )
+            return
+
+        ppo = config[
+            "algorithm_settings"
+        ]["ppo"]
+
         arguments = [
             "-u",
             str(trainer_path),
+
             "--ports",
             ports_text,
+
             "--timesteps",
-            str(config["total_timesteps"]),
+            str(
+                config["total_timesteps"]
+            ),
+
             "--learning-rate",
-            str(config["learning_rate"]),
+            str(
+                ppo["learning_rate"]
+            ),
+
             "--n-steps",
-            str(config["n_steps"]),
+            str(
+                ppo["n_steps"]
+            ),
+
+            "--batch-size",
+            str(
+                ppo["batch_size"]
+            ),
+
+            "--n-epochs",
+            str(
+                ppo["n_epochs"]
+            ),
+
+            "--gamma",
+            str(
+                ppo["gamma"]
+            ),
+
+            "--seed",
+            str(seed),
+
+            "--model-path",
+            str(
+                config["model_path"]
+            ),
         ]
 
         self.training_process = QProcess(self)
@@ -150,27 +238,99 @@ class SpotManager(QMainWindow):
 
         self.log_output.clear()
         self.log_output.append("Iniciando treinamento...\n")
-        self.log_output.append(f"Portas: {ports_text}")
-        self.log_output.append(
-            f"Instâncias: {config['instances']}"
+
+        rollout = (
+            config["instances"]
+            * ppo["n_steps"]
         )
+
+        self.log_output.append(
+            f"Robô: {config['robot']}"
+        )
+
+        self.log_output.append(
+            f"Algoritmo: "
+            f"{config['algorithm'].upper()}"
+        )
+
+        self.log_output.append(
+            f"Modelo: {config['model_path']}"
+        )
+
+        self.log_output.append(
+            f"Portas: {ports_text}"
+        )
+
+        self.log_output.append(
+            f"Instâncias: "
+            f"{config['instances']}"
+        )
+
+        self.log_output.append(
+            f"Learning rate: "
+            f"{ppo['learning_rate']}"
+        )
+
+        self.log_output.append(
+            f"N steps: {ppo['n_steps']}"
+        )
+
+        self.log_output.append(
+            f"Batch size: "
+            f"{ppo['batch_size']}"
+        )
+
+        self.log_output.append(
+            f"N epochs: "
+            f"{ppo['n_epochs']}"
+        )
+
+        self.log_output.append(
+            f"Gamma: {ppo['gamma']}"
+        )
+
+        if config["random_seed"]:
+            self.log_output.append(
+                f"Seed: {seed} (aleatória)"
+            )
+        else:
+            self.log_output.append(
+                f"Seed: {seed}"
+            )
+
         self.log_output.append(
             f"Rollout: "
             f"{config['instances']} × "
-            f"{config['n_steps']} = "
-            f"{config['instances'] * config['n_steps']}\n"
+            f"{ppo['n_steps']} = "
+            f"{rollout}\n"
         )
 
         self.training_process.start()
 
-        self.start_training_button.setEnabled(False)
-        self.stop_training_button.setEnabled(True)
-        self.start_webots_button.setEnabled(False)
-        self.stop_webots_button.setEnabled(False)
+        self.start_webots_button.setEnabled(
+            False
+        )
+
+        self.stop_webots_button.setEnabled(
+            False
+        )
+
+        self.start_training_button.setEnabled(
+            False
+        )
+
+        self.stop_training_button.setEnabled(
+            True
+        )
+
+        self.compatibility_button.setEnabled(
+            False
+        )
 
         self.status_label.setText(
             "Treinamento em execução."
         )
+
 
     def stop_training(self):
         """
@@ -249,6 +409,234 @@ class SpotManager(QMainWindow):
         scrollbar.setValue(scrollbar.maximum())
 
     # ------------------------------------------------------------------
+    # Compatibility
+    # ------------------------------------------------------------------
+
+    def check_compatibility(self):
+
+        if self.launcher is None:
+            self.status_label.setText(
+                "Inicie o Webots antes de verificar compatibilidade."
+            )
+            return
+
+        if (
+            self.compatibility_process is not None
+            and self.compatibility_process.state()
+            != QProcess.NotRunning
+        ):
+            self.status_label.setText(
+                "Verificação já está em execução."
+            )
+            return
+
+        config = self.get_config()
+
+        model_path = (
+            config["model_path"].strip()
+        )
+
+        if not model_path:
+            self.status_label.setText(
+                "Nenhum modelo selecionado."
+            )
+            return
+
+        python_exe = (
+            Path(config["venv_path"])
+            / "Scripts"
+            / "python.exe"
+        )
+
+        checker_path = (
+            TRAINING_PATH
+            / "check_compatibility.py"
+        )
+
+        ports = self.launcher.get_ports()
+
+        ports_text = ",".join(
+            str(port)
+            for port in ports
+        )
+
+        arguments = [
+            "-u",
+            str(checker_path),
+
+            "--ports",
+            ports_text,
+
+            "--model-path",
+            model_path,
+
+            "--algorithm",
+            config["algorithm"],
+        ]
+
+        self.compatibility_process = QProcess(
+            self
+        )
+
+        self.compatibility_process.setProgram(
+            str(python_exe)
+        )
+
+        self.compatibility_process.setArguments(
+            arguments
+        )
+
+        self.compatibility_process.setWorkingDirectory(
+            str(PROJECT_ROOT)
+        )
+
+        environment = (
+            QProcessEnvironment.systemEnvironment()
+        )
+
+        environment.insert(
+            "WEBOTS_HOME",
+            config["webots_home"],
+        )
+
+        self.compatibility_process.setProcessEnvironment(
+            environment
+        )
+
+        self.compatibility_process.setProcessChannelMode(
+            QProcess.MergedChannels
+        )
+
+        self.compatibility_process.readyReadStandardOutput.connect(
+            self.read_compatibility_output
+        )
+
+        self.compatibility_process.finished.connect(
+            self.compatibility_finished
+        )
+
+        self.model_compatible = None
+        self.compatibility_output = ""
+
+        self.compatibility_button.setEnabled(False)
+        self.start_training_button.setEnabled(False)
+
+        self.log_output.append(
+            "\n=== VERIFICANDO COMPATIBILIDADE ===\n"
+        )
+
+        self.status_label.setText(
+            "Verificando compatibilidade..."
+        )
+
+        self.compatibility_process.start()
+
+    def read_compatibility_output(self):
+
+        if self.compatibility_process is None:
+            return
+
+        data = (
+            self.compatibility_process
+            .readAllStandardOutput()
+        )
+
+        text = bytes(data).decode(
+            "utf-8",
+            errors="replace",
+        )
+
+        self.compatibility_output += text
+
+        self.log_output.insertPlainText(
+            text
+        )
+
+        scrollbar = (
+            self.log_output.verticalScrollBar()
+        )
+
+        scrollbar.setValue(
+            scrollbar.maximum()
+        )
+
+    def compatibility_finished(
+        self,
+        exit_code,
+        exit_status,
+    ):
+
+        output = self.compatibility_output
+
+        if "INCOMPATIBLE|" in output:
+
+            self.model_compatible = False
+
+            self.status_label.setText(
+                "✗ Modelo incompatível com o ambiente."
+            )
+
+            self.start_training_button.setEnabled(
+                False
+            )
+
+        elif "COMPATIBLE|" in output:
+
+            self.model_compatible = True
+
+            self.status_label.setText(
+                "✓ Modelo compatível com o ambiente."
+            )
+
+            self.start_training_button.setEnabled(
+                True
+            )
+
+        elif "NEW|" in output:
+
+            self.model_compatible = True
+
+            self.status_label.setText(
+                "✓ Modelo novo. Pronto para treinar."
+            )
+
+            self.start_training_button.setEnabled(
+                True
+            )
+
+        else:
+
+            self.model_compatible = None
+
+            self.status_label.setText(
+                "Não foi possível verificar "
+                "a compatibilidade."
+            )
+
+            self.start_training_button.setEnabled(
+                False
+            )
+
+        self.compatibility_button.setEnabled(
+            self.launcher is not None
+        )
+
+        self.compatibility_process = None
+
+    def invalidate_compatibility(self):
+
+        self.model_compatible = None
+
+        if self.launcher is not None:
+            self.start_training_button.setEnabled(
+                False
+            )
+
+            self.compatibility_button.setEnabled(
+                True
+            )
+
+    # ------------------------------------------------------------------
     # Webots
     # ------------------------------------------------------------------
 
@@ -282,7 +670,9 @@ class SpotManager(QMainWindow):
 
             self.start_webots_button.setEnabled(False)
             self.stop_webots_button.setEnabled(True)
-            self.start_training_button.setEnabled(True)
+            self.start_training_button.setEnabled(False)
+
+            self.compatibility_button.setEnabled(True)
 
         except Exception as error:
             if self.launcher is not None:
@@ -322,6 +712,9 @@ class SpotManager(QMainWindow):
         self.start_training_button.setEnabled(False)
         self.stop_training_button.setEnabled(False)
 
+        self.compatibility_button.setEnabled(False)
+        self.model_compatible = None
+
     # ------------------------------------------------------------------
     # UI
     # ------------------------------------------------------------------
@@ -332,6 +725,68 @@ class SpotManager(QMainWindow):
 
         main_layout = QVBoxLayout(central_widget)
         form = QFormLayout()
+
+        # Robot
+        self.robot_input = QComboBox()
+        self.robot_input.addItem("Spot", "spot")
+
+        form.addRow(
+            "Robô:",
+            self.robot_input,
+        )
+
+        # Algorithm
+        self.algorithm_input = QComboBox()
+
+        for algorithm in self.config[
+            "available_algorithms"
+        ]:
+            self.algorithm_input.addItem(
+                algorithm.upper(),
+                algorithm,
+            )
+
+        form.addRow(
+            "Algoritmo:",
+            self.algorithm_input,
+        )
+
+        # Model
+        self.model_input = QLineEdit()
+
+        self.model_input.editingFinished.connect(
+            self.inspect_selected_model
+        )
+
+        self.model_input.textChanged.connect(
+            self.invalidate_compatibility
+        )
+
+        model_row = QHBoxLayout()
+        model_row.addWidget(self.model_input)
+
+        model_button = QPushButton(
+            "Carregar..."
+        )
+        model_button.clicked.connect(
+            self.select_model
+        )
+
+        model_row.addWidget(model_button)
+
+        form.addRow(
+            "Modelo:",
+            model_row,
+        )
+
+        self.model_status_label = QLabel(
+            "Nenhum modelo carregado."
+        )
+
+        form.addRow(
+            "Status do modelo:",
+            self.model_status_label,
+        )
 
         # Webots
         self.webots_input = QLineEdit()
@@ -432,10 +887,78 @@ class SpotManager(QMainWindow):
             self.n_steps_input,
         )
 
+        # Batch size
+        self.batch_size_input = QSpinBox()
+        self.batch_size_input.setRange(
+            1,
+            1_000_000,
+        )
+
+        form.addRow(
+            "Batch size:",
+            self.batch_size_input,
+        )
+
+        # N epochs
+        self.n_epochs_input = QSpinBox()
+        self.n_epochs_input.setRange(
+            1,
+            1000,
+        )
+
+        form.addRow(
+            "N epochs:",
+            self.n_epochs_input,
+        )
+
+        # Gamma
+        self.gamma_input = QDoubleSpinBox()
+        self.gamma_input.setDecimals(6)
+        self.gamma_input.setRange(
+            0.0,
+            1.0,
+        )
+        self.gamma_input.setSingleStep(
+            0.001
+        )
+
+        form.addRow(
+            "Gamma:",
+            self.gamma_input,
+        )
+
+        # Seed
+        self.seed_input = QSpinBox()
+        self.seed_input.setRange(
+            0,
+            2_147_483_647,
+        )
+
+        self.random_seed_input = QCheckBox(
+            "Aleatória"
+        )
+
+        self.random_seed_input.toggled.connect(
+            self.update_seed_mode
+        )
+
+        seed_row = QHBoxLayout()
+        seed_row.addWidget(self.seed_input)
+        seed_row.addWidget(self.random_seed_input)
+
+        form.addRow(
+            "Seed:",
+            seed_row,
+        )
+
         main_layout.addLayout(form)
 
         self.rollout_label = QLabel()
         main_layout.addWidget(self.rollout_label)
+
+        self.algorithm_input.currentIndexChanged.connect(
+            self.update_rollout
+        )
 
         # Config buttons
         config_buttons = QHBoxLayout()
@@ -452,8 +975,22 @@ class SpotManager(QMainWindow):
             self.preflight_check
         )
 
+        self.compatibility_button = QPushButton(
+            "Verificar compatibilidade"
+        )
+
+        self.compatibility_button.setEnabled(False)
+
+        self.compatibility_button.clicked.connect(
+            self.check_compatibility
+        )
+
         config_buttons.addWidget(save_button)
         config_buttons.addWidget(check_button)
+        config_buttons.addWidget(
+            self.compatibility_button
+        )
+
         main_layout.addLayout(config_buttons)
 
         # Webots buttons
@@ -529,49 +1066,192 @@ class SpotManager(QMainWindow):
     # ------------------------------------------------------------------
 
     def load_values(self):
+
         self.webots_input.setText(
             self.config["webots_home"]
         )
+
         self.world_input.setText(
             self.config["world_path"]
         )
+
         self.venv_input.setText(
             self.config["venv_path"]
         )
+
         self.controller_input.setText(
             self.config["controller_path"]
         )
 
+        self.model_input.setText(
+            self.config["model_path"]
+        )
+
+        # Robot
+        robot_index = (
+            self.robot_input.findData(
+                self.config["robot"]
+            )
+        )
+
+        if robot_index >= 0:
+            self.robot_input.setCurrentIndex(
+                robot_index
+            )
+
+        # Algorithm
+        algorithm_index = (
+            self.algorithm_input.findData(
+                self.config["algorithm"]
+            )
+        )
+
+        if algorithm_index >= 0:
+            self.algorithm_input.setCurrentIndex(
+                algorithm_index
+            )
+
         self.instances_input.setValue(
             self.config["instances"]
         )
+
         self.port_input.setValue(
             self.config["base_port"]
         )
+
         self.timesteps_input.setValue(
             self.config["total_timesteps"]
         )
-        self.learning_rate_input.setValue(
-            self.config["learning_rate"]
+
+        self.seed_input.setValue(
+            self.config["seed"]
         )
+
+        self.random_seed_input.setChecked(
+            self.config.get(
+                "random_seed",
+                False,
+            )
+        )
+
+        self.update_seed_mode()
+
+        # PPO
+        ppo_config = self.config[
+            "algorithm_settings"
+        ]["ppo"]
+
+        self.learning_rate_input.setValue(
+            ppo_config["learning_rate"]
+        )
+
         self.n_steps_input.setValue(
-            self.config["n_steps"]
+            ppo_config["n_steps"]
+        )
+
+        self.batch_size_input.setValue(
+            ppo_config["batch_size"]
+        )
+
+        self.n_epochs_input.setValue(
+            ppo_config["n_epochs"]
+        )
+
+        self.gamma_input.setValue(
+            ppo_config["gamma"]
         )
 
         self.update_rollout()
 
     def get_config(self):
-        return {
-            "webots_home": self.webots_input.text(),
-            "world_path": self.world_input.text(),
-            "venv_path": self.venv_input.text(),
-            "controller_path": self.controller_input.text(),
-            "instances": self.instances_input.value(),
-            "base_port": self.port_input.value(),
-            "total_timesteps": self.timesteps_input.value(),
-            "learning_rate": self.learning_rate_input.value(),
-            "n_steps": self.n_steps_input.value(),
+
+        # Preserva configurações que ainda
+        # não estão expostas na interface.
+        config = self.config.copy()
+
+        config[
+            "algorithm_settings"
+        ] = {
+            name: settings.copy()
+            for name, settings
+            in self.config[
+                "algorithm_settings"
+            ].items()
         }
+
+        config["robot"] = (
+            self.robot_input.currentData()
+        )
+
+        config["algorithm"] = (
+            self.algorithm_input.currentData()
+        )
+
+        config["webots_home"] = (
+            self.webots_input.text()
+        )
+
+        config["world_path"] = (
+            self.world_input.text()
+        )
+
+        config["venv_path"] = (
+            self.venv_input.text()
+        )
+
+        config["controller_path"] = (
+            self.controller_input.text()
+        )
+
+        config["model_path"] = (
+            self.model_input.text()
+        )
+
+        config["instances"] = (
+            self.instances_input.value()
+        )
+
+        config["base_port"] = (
+            self.port_input.value()
+        )
+
+        config["total_timesteps"] = (
+            self.timesteps_input.value()
+        )
+
+        config["seed"] = (
+            self.seed_input.value()
+        )
+
+        config["random_seed"] = (
+            self.random_seed_input.isChecked()
+        )
+
+        ppo = config[
+            "algorithm_settings"
+        ]["ppo"]
+
+        ppo["learning_rate"] = (
+            self.learning_rate_input.value()
+        )
+
+        ppo["n_steps"] = (
+            self.n_steps_input.value()
+        )
+
+        ppo["batch_size"] = (
+            self.batch_size_input.value()
+        )
+
+        ppo["n_epochs"] = (
+            self.n_epochs_input.value()
+        )
+
+        ppo["gamma"] = (
+            self.gamma_input.value()
+        )
+
+        return config
 
     def save(self):
         config = self.get_config()
@@ -581,14 +1261,51 @@ class SpotManager(QMainWindow):
             "Configuração salva."
         )
 
+    def update_seed_mode(
+        self,
+        checked=None,
+    ):
+
+        if checked is None:
+            checked = (
+                self.random_seed_input.isChecked()
+            )
+
+        self.seed_input.setEnabled(
+            not checked
+        )
+
     def update_rollout(self):
-        instances = self.instances_input.value()
-        n_steps = self.n_steps_input.value()
-        total = instances * n_steps
+
+        algorithm = (
+            self.algorithm_input.currentData()
+        )
+
+        if algorithm != "ppo":
+            self.rollout_label.setText(
+                "Rollout total: "
+                "não aplicável."
+            )
+            return
+
+        instances = (
+            self.instances_input.value()
+        )
+
+        n_steps = (
+            self.n_steps_input.value()
+        )
+
+        total = (
+            instances
+            * n_steps
+        )
 
         self.rollout_label.setText(
             f"Rollout total: "
-            f"{instances} × {n_steps} = {total}"
+            f"{instances} × "
+            f"{n_steps} = "
+            f"{total}"
         )
 
     def preflight_check(self):
@@ -667,6 +1384,7 @@ class SpotManager(QMainWindow):
         training_required_files = [
             "train_parallel.py",
             "webots_vec_env.py",
+            "check_compatibility.py",
         ]
 
         for filename in training_required_files:
@@ -697,6 +1415,153 @@ class SpotManager(QMainWindow):
     # ------------------------------------------------------------------
     # File selection
     # ------------------------------------------------------------------
+
+    def select_model(self):
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Selecione um modelo",
+            str(PROJECT_ROOT / "models"),
+            "Stable-Baselines3 (*.zip)",
+        )
+
+        if not path:
+            return
+
+        self.model_input.setText(path)
+
+        self.inspect_selected_model()
+
+    def inspect_selected_model(self):
+
+        path = self.model_input.text().strip()
+
+        if not path:
+            self.model_status_label.setText(
+                "Nenhum modelo selecionado."
+            )
+            return
+
+        algorithm = (
+            self.algorithm_input.currentData()
+        )
+
+        result = inspect_model(
+            path,
+            algorithm,
+        )
+
+        if not result.get("exists"):
+            self.model_status_label.setText(
+                "Novo modelo — arquivo ainda não existe."
+            )
+
+            self.log_output.append(
+                "\nModelo não encontrado."
+            )
+
+            self.log_output.append(
+                "Um novo modelo será criado "
+                "neste caminho ao iniciar o treino.\n"
+            )
+
+            return
+
+        if not result.get("valid"):
+            self.model_status_label.setText(
+                "✗ Modelo inválido."
+            )
+
+            self.log_output.append(
+                "\nFalha ao carregar modelo:"
+            )
+
+            self.log_output.append(
+                result.get(
+                    "error",
+                    "Erro desconhecido.",
+                )
+            )
+
+            return
+
+        self.model_status_label.setText(
+            f"✓ {result['algorithm'].upper()} | "
+            f"{result['observation_space']} | "
+            f"{result['action_space']}"
+        )
+
+        self.log_output.append(
+            "\n=== MODELO CARREGADO ==="
+        )
+
+        self.log_output.append(
+            f"Arquivo: {path}"
+        )
+
+        self.log_output.append(
+            f"Algoritmo: "
+            f"{result['algorithm'].upper()}"
+        )
+
+        self.log_output.append(
+            f"Observation space: "
+            f"{result['observation_space']}"
+        )
+
+        self.log_output.append(
+            f"Action space: "
+            f"{result['action_space']}"
+        )
+
+        # Preenche os parâmetros PPO
+        if algorithm == "ppo":
+
+            if "learning_rate" in result:
+                self.learning_rate_input.setValue(
+                    float(
+                        result["learning_rate"]
+                    )
+                )
+
+            if "n_steps" in result:
+                self.n_steps_input.setValue(
+                    int(
+                        result["n_steps"]
+                    )
+                )
+
+            if "batch_size" in result:
+                self.batch_size_input.setValue(
+                    int(
+                        result["batch_size"]
+                    )
+                )
+
+            if "n_epochs" in result:
+                self.n_epochs_input.setValue(
+                    int(
+                        result["n_epochs"]
+                    )
+                )
+
+            if "gamma" in result:
+                self.gamma_input.setValue(
+                    float(
+                        result["gamma"]
+                    )
+                )
+
+        self.update_rollout()
+
+        self.log_output.append(
+            "\nParâmetros carregados na interface."
+        )
+
+        self.log_output.append(
+            "Você pode alterá-los antes "
+            "de continuar o treinamento.\n"
+        )
 
     def select_webots(self):
         path = QFileDialog.getExistingDirectory(
