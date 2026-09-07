@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from config import load_config, save_config
 from launcher import WebotsLauncher
 from model_inspector import inspect_model
+from run_manager import RunSession
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -46,6 +47,7 @@ class SpotManager(QMainWindow):
         self.training_process = None
         self.test_process = None
         self.operation = None
+        self.current_run = None
         self.stop_requested = False
         self.close_pending = False
         self.webots_closed = False
@@ -114,12 +116,76 @@ class SpotManager(QMainWindow):
             self.close_pending = False
             QTimer.singleShot(0, self.close)
 
+    def begin_run(
+            self,
+            operation,
+            config,
+            seed,
+            ports,
+        ):
+
+            try:
+
+                self.current_run = RunSession(
+                    operation=operation,
+                    config=config,
+                    seed=seed,
+                    ports=ports,
+                )
+
+            except Exception as error:
+
+                self.current_run = None
+
+                self.status_label.setText(
+                    f"Erro ao criar run: {error}"
+                )
+
+                return False
+
+            self.log_output.append(
+                f"Run: "
+                f"{self.current_run.directory}\n"
+            )
+
+            return True
+
+
+    def finish_run(
+        self,
+        status,
+        exit_code=None,
+        details=None,
+    ):
+
+        if self.current_run is None:
+            return
+
+        try:
+
+            self.current_run.finish(
+                status=status,
+                exit_code=exit_code,
+                details=details,
+            )
+
+        finally:
+
+            self.current_run = None
+
     def prepare_operation(self):
         self.webots_closed = False
         self.transport_failure = None
         self.transport_log_tail = ""
 
     def record_process_output(self, text):
+
+        if self.current_run is not None:
+
+            self.current_run.append(
+                text
+            )
+
         # QProcess can split a protocol tag across output chunks.
         combined = self.transport_log_tail + text
         for tag in ("WORKER_DISCONNECTED", "WORKER_TIMEOUT", "WORKER_ERROR", "WORKER_PROTOCOL"):
@@ -150,7 +216,21 @@ class SpotManager(QMainWindow):
         self.status_label.setText(f"Falha no processo: {detail}")
         # FailedToStart does not produce a finished signal.
         if error == QProcess.FailedToStart:
-            setattr(self, attribute, None)
+
+            self.finish_run(
+                status="failed",
+                details={
+                    "process_error": detail,
+                    "failed_to_start": True,
+                },
+            )
+
+            setattr(
+                self,
+                attribute,
+                None,
+            )
+
             self.finish_operation()
 
     def start_test(self):
@@ -173,6 +253,17 @@ class SpotManager(QMainWindow):
         save_config(config)
         # Test uses the first existing instance; no new Webots is launched.
         port = self.launcher.get_ports()[0]
+
+        self.log_output.clear()
+
+        if not self.begin_run(
+            operation="testing",
+            config=config,
+            seed=seed,
+            ports=[port],
+        ):
+            return
+
         process = QProcess(self)
         self.test_process = process
         process.setProgram(str(Path(config["venv_path"]) / "Scripts" / "python.exe"))
@@ -194,7 +285,6 @@ class SpotManager(QMainWindow):
         process.readyReadStandardOutput.connect(self.read_test_output)
         process.finished.connect(self.test_finished)
         process.errorOccurred.connect(lambda error: self.process_error("test_process", error))
-        self.log_output.clear()
         self.log_output.append(f"Testando na porta {port}, seed {seed}, {config['test_episodes']} episódios. Tempo real.\n")
         self.prepare_operation()
         self.operation = "testing"
@@ -237,6 +327,40 @@ class SpotManager(QMainWindow):
         else:
             message = f"Teste falhou (código {exit_code}). Consulte o log."
         self.status_label.setText(message)
+
+        success = (
+            exit_code == 0
+            and exit_status
+            == QProcess.NormalExit
+        )
+
+        if success:
+
+            status = (
+                "stopped"
+                if stopped
+                else "completed"
+            )
+
+        else:
+
+            status = "failed"
+
+        self.finish_run(
+            status=status,
+            exit_code=exit_code,
+            details={
+                "stopped_by_user":
+                    stopped,
+
+                "transport_failure":
+                    self.transport_failure,
+
+                "webots_closed":
+                    self.webots_closed,
+            },
+        )
+
         self.finish_operation()
 
     def ensure_runtime_directories(self):
@@ -395,6 +519,16 @@ class SpotManager(QMainWindow):
             ),
         ]
 
+        self.log_output.clear()
+
+        if not self.begin_run(
+            operation="training",
+            config=config,
+            seed=seed,
+            ports=ports,
+        ):
+            return
+
         self.training_process = QProcess(self)
         self.training_process.setProgram(str(python_exe))
         self.training_process.setArguments(arguments)
@@ -423,7 +557,6 @@ class SpotManager(QMainWindow):
             self.training_error
         )
 
-        self.log_output.clear()
         self.log_output.append("Iniciando treinamento...\n")
 
         rollout = (
@@ -538,15 +671,81 @@ class SpotManager(QMainWindow):
         self.stop_requested = True
         self.sync_ui_state()
 
-    def training_finished(self, exit_code, exit_status):
+    def training_finished(
+        self,
+        exit_code,
+        exit_status,
+    ):
+
         self.read_training_output()
+
         self.clear_stop_file()
-        self.training_process = None
-        self.status_label.setText(
-            "Treinamento finalizado e modelo salvo."
-            if exit_code == 0 and exit_status == QProcess.NormalExit
-            else f"Treinamento falhou (código {exit_code}). Consulte o log."
+
+        stopped = (
+            self.stop_requested
         )
+
+        success = (
+            exit_code == 0
+            and exit_status
+            == QProcess.NormalExit
+            and self.transport_failure is None
+            and not self.webots_closed
+        )
+
+        if success:
+
+            status = (
+                "stopped"
+                if stopped
+                else "completed"
+            )
+
+        else:
+
+            status = "failed"
+
+        self.finish_run(
+            status=status,
+            exit_code=exit_code,
+            details={
+                "stopped_by_user":
+                    stopped,
+
+                "transport_failure":
+                    self.transport_failure,
+
+                "webots_closed":
+                    self.webots_closed,
+            },
+        )
+
+        self.training_process = None
+
+        if success:
+
+            if stopped:
+
+                self.status_label.setText(
+                    "Treinamento interrompido "
+                    "e modelo salvo."
+                )
+
+            else:
+
+                self.status_label.setText(
+                    "Treinamento finalizado "
+                    "e modelo salvo."
+                )
+
+        else:
+
+            self.status_label.setText(
+                f"Treinamento falhou "
+                f"(código {exit_code}). "
+                "Consulte o log."
+            )
+
         self.finish_operation()
 
     def training_error(self, error):

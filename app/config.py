@@ -26,6 +26,12 @@ DEFAULT_CONFIG = {
         / "static_spot_parallel.wbt"
     ),
 
+    "output_model_path": str(
+        PROJECT_ROOT
+        / "models"
+        / "ppo_spot_output"
+    ),
+
     "venv_path": r"G:\UFSC\WeBots\spotWebots\env",
 
     "controller_path": str(
