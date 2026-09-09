@@ -2,6 +2,7 @@
 
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/boston_dynamics/spot/protos/Spot.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/Parquetry.proto"
 
 WorldInfo {
   info [
@@ -11,7 +12,7 @@ WorldInfo {
 }
 Viewpoint {
   orientation -0.20637559910247547 0.7166266056370367 0.6662247520080842 0.8160206945899523
-  position -5.004253784875012 -3.4313653523893026 4.354393167207152
+  position -56.98601141048187 -36.07934358627213 46.42149139891483
 }
 Background {
   skyColor [
@@ -23,12 +24,16 @@ DirectionalLight {
   direction 0.1 -0.5 0.3
 }
 RectangleArena {
-  floorSize 120 120
+  floorSize 350 350
+  floorAppearance Parquetry {
+    type "chequered"
+    colorOverride 0 0 0
+  }
   wallThickness 0.2
   wallHeight 1
 }
 Spot {
   rotation 0 0 1 -1.5707953071795862
-  controller "test_deterministic"
+  controller "<extern>"
   supervisor TRUE
 }
