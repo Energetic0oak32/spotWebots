@@ -30,7 +30,7 @@ MODEL_PATH = (
     / "ppo_spot.zip"
 )
 
-SEED = 42
+SEED = None
 
 
 env = SpotEnv()
@@ -40,9 +40,7 @@ model = PPO.load(
     env=env
 )
 
-obs, info = env.reset(
-    seed=SEED
-)
+obs, info = env.reset(seed=SEED)
 
 episode = 1
 step_count = 0
@@ -100,6 +98,4 @@ while True:
         step_count = 0
         episode_reward = 0.0
 
-        obs, info = env.reset(
-            seed=SEED
-        )
+        obs, info = env.reset(seed=SEED)
