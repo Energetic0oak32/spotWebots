@@ -3,6 +3,7 @@
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/boston_dynamics/spot/protos/Spot.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/Parquetry.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/UnevenTerrain.proto"
 
 WorldInfo {
   info [
@@ -12,7 +13,8 @@ WorldInfo {
 }
 Viewpoint {
   orientation -0.20637559910247547 0.7166266056370367 0.6662247520080842 0.8160206945899523
-  position -56.98601141048187 -36.07934358627213 46.42149139891483
+  position -5.949253404846306 -4.024887550043046 5.119149759867714
+  follow "Spot"
 }
 Background {
   skyColor [
@@ -30,10 +32,16 @@ RectangleArena {
     colorOverride 0 0 0
   }
   wallThickness 0.2
-  wallHeight 1
+  wallHeight 80
 }
 Spot {
+  translation 0 0 0.834
   rotation 0 0 1 -1.5707953071795862
   controller "<extern>"
   supervisor TRUE
+}
+UnevenTerrain {
+  size 350 350 50
+  flatCenter TRUE
+  perlinNOctaves 9
 }
